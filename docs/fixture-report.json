@@ -15,8 +15,8 @@
     ],
     "connects_total": 120,
     "connects_non_loopback": 0,
-    "wall_s": 19.490365499979816,
-    "started_at": "2026-11-11T05:19:55+00:00",
+    "wall_s": 21.62018245807849,
+    "started_at": "2026-11-11T06:32:41+00:00",
     "model": "NOT CALLED (scripted turn: 61 llm_execution steps answered by PROVING GROUND, 0 provider calls)",
     "provider": "none (closed loopback 127.0.0.1:9)",
     "approvals": "mode manual, single_query_mode deny, cron_mode deny, unattended_mode deny (headless child: every approval is denied)",
@@ -991,11 +991,11 @@
         "ran": true,
         "injected_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
+          "content": "provingground write check PGCANARY-a34c46d8642cbc78\n"
         },
         "final_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
+          "content": "provingground write check PGCANARY-a34c46d8642cbc78\n"
         },
         "status": "ok",
         "error_type": null,
@@ -1007,7 +1007,7 @@
         "escaped_reasons": [],
         "pre_seen_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
+          "content": "provingground write check PGCANARY-a34c46d8642cbc78\n"
         }
       },
       "TC07": {
@@ -1024,8 +1024,8 @@
         "error_type": null,
         "error_message": null,
         "terminal_raw": null,
-        "tool_raw": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
-        "delivered": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "tool_raw": "{\"content\": \"1|canary line PGCANARY-a34c46d8642cbc78\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "delivered": "{\"content\": \"1|canary line PGCANARY-a34c46d8642cbc78\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
         "recorded": false,
         "escaped_reasons": [],
         "pre_seen_args": {
@@ -1222,11 +1222,11 @@
         "ran": true,
         "injected_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
+          "content": "provingground write check PGCANARY-a34c46d8642cbc78\n"
         },
         "final_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
+          "content": "provingground write check PGCANARY-a34c46d8642cbc78\n"
         },
         "status": "ok",
         "error_type": null,
@@ -1238,7 +1238,7 @@
         "escaped_reasons": [],
         "pre_seen_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
+          "content": "provingground write check PGCANARY-a34c46d8642cbc78\n"
         }
       },
       "TC07": {
@@ -1255,8 +1255,8 @@
         "error_type": null,
         "error_message": null,
         "terminal_raw": null,
-        "tool_raw": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
-        "delivered": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "tool_raw": "{\"content\": \"1|canary line PGCANARY-a34c46d8642cbc78\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "delivered": "{\"content\": \"1|canary line PGCANARY-a34c46d8642cbc78\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
         "recorded": false,
         "escaped_reasons": [],
         "pre_seen_args": {
@@ -1453,11 +1453,11 @@
         "ran": true,
         "injected_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
+          "content": "provingground write check PGCANARY-a34c46d8642cbc78\n"
         },
         "final_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
+          "content": "provingground write check PGCANARY-a34c46d8642cbc78\n"
         },
         "status": "ok",
         "error_type": null,
@@ -1469,7 +1469,7 @@
         "escaped_reasons": [],
         "pre_seen_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
+          "content": "provingground write check PGCANARY-a34c46d8642cbc78\n"
         }
       },
       "TC07": {
@@ -1486,8 +1486,8 @@
         "error_type": null,
         "error_message": null,
         "terminal_raw": null,
-        "tool_raw": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
-        "delivered": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "tool_raw": "{\"content\": \"1|canary line PGCANARY-a34c46d8642cbc78\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "delivered": "{\"content\": \"1|canary line PGCANARY-a34c46d8642cbc78\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
         "recorded": false,
         "escaped_reasons": [],
         "pre_seen_args": {
@@ -1684,11 +1684,11 @@
         "ran": true,
         "injected_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
+          "content": "provingground write check PGCANARY-a34c46d8642cbc78\n"
         },
         "final_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
+          "content": "provingground write check PGCANARY-a34c46d8642cbc78\n"
         },
         "status": "ok",
         "error_type": null,
@@ -1700,7 +1700,7 @@
         "escaped_reasons": [],
         "pre_seen_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
+          "content": "provingground write check PGCANARY-a34c46d8642cbc78\n"
         }
       },
       "TC07": {
@@ -1717,8 +1717,8 @@
         "error_type": null,
         "error_message": null,
         "terminal_raw": null,
-        "tool_raw": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
-        "delivered": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "tool_raw": "{\"content\": \"1|canary line PGCANARY-a34c46d8642cbc78\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "delivered": "{\"content\": \"1|canary line PGCANARY-a34c46d8642cbc78\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
         "recorded": false,
         "escaped_reasons": [],
         "pre_seen_args": {
@@ -1915,11 +1915,11 @@
         "ran": true,
         "injected_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
+          "content": "provingground write check PGCANARY-a34c46d8642cbc78\n"
         },
         "final_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
+          "content": "provingground write check PGCANARY-a34c46d8642cbc78\n"
         },
         "status": "ok",
         "error_type": null,
@@ -1931,7 +1931,7 @@
         "escaped_reasons": [],
         "pre_seen_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
+          "content": "provingground write check PGCANARY-a34c46d8642cbc78\n"
         }
       },
       "TC07": {
@@ -1948,8 +1948,8 @@
         "error_type": null,
         "error_message": null,
         "terminal_raw": null,
-        "tool_raw": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
-        "delivered": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "tool_raw": "{\"content\": \"1|canary line PGCANARY-a34c46d8642cbc78\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "delivered": "{\"content\": \"1|canary line PGCANARY-a34c46d8642cbc78\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
         "recorded": false,
         "escaped_reasons": [],
         "pre_seen_args": {

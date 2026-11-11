@@ -30,7 +30,7 @@
 | CL-22 | PROVING GROUND deletes only temp directories it created. | test | tests/test_cleanup.py::test_unowned_directories_are_never_swept |
 | CL-23 | The committed fixture drill recorded 10 test calls, 3 plugins, 3 distinct effects and 1 cross-plugin finding. | grep | docs/fixture-report.json :: "tally": "10 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding" |
 | CL-24 | In that drill the model was not called: 61 scripted steps answered by PROVING GROUND, 0 provider calls. | grep | docs/fixture-report.json :: NOT CALLED \(scripted turn: 61 llm_execution steps answered by PROVING GROUND, 0 provider calls\) |
-| CL-25 | That drill took 19.5 s on a warm cache. | grep | docs/fixture-report.json :: "wall_s": 19\.[45]\d* |
+| CL-25 | That drill took 21.6 s on a warm cache. | grep | docs/fixture-report.json :: "wall_s": 21\.6\d* |
 | CL-26 | That drill left 0 drill processes and 0 drill roots. | grep | docs/fixture-report.json :: "leftover_processes": 0,\s*"leftover_roots": 0 |
 | CL-27 | In that drill fx_guard only saw TC03's original command in the stack, and the rewritten command ran (REWRITE_UNSEEN_BY). | grep | docs/fixture-report.json :: "kind": "REWRITE_UNSEEN_BY",\s*"call_id": "TC03" |
 | CL-28 | In that drill TC04's removed FAILED line is attributed to fx_trimmer by one solo run. | grep | docs/fixture-report.md :: attribution TC04 RESULT CHANGED: solo-match — observed in one solo run: fx_trimmer |
