@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Mapping, Sequence
 
@@ -16,6 +16,7 @@ APPROVAL_PHRASES = ("runs without a user present to approve it", "Command denied
 VOLATILE_KEYS = frozenset({"duration", "duration_ms", "elapsed", "elapsed_ms", "started_at", "finished_at", "wall_time",
                            "full_output_path"})  # spill-file path, tools/terminal_tool_result.py:193
 CORE_TRUNCATION_KEY = "truncation_note"  # core head+tail capture window, tools/terminal_tool_result.py:193
+CORE_NOTE = "Hermes core changed the output (for example truncation); no plugin involved"
 _SPILL_FILE = re.compile(r"out-\d+-\d+-[0-9a-f]+\.log")
 
 
@@ -92,6 +93,7 @@ class Cell:
     core: bool = False
     unstable: bool = False
     note: str = ""
+    core_also: bool = False  # a plugin changed the delivered result on a call Hermes core also changes
 
     @property
     def primary(self) -> Outcome:
@@ -286,9 +288,17 @@ def classify_baseline(obs: CallObservation) -> Cell:
     if gate is not None:
         return Cell("baseline", obs.call_id, (gate,), core=gate is Outcome.APPROVAL_GATED)
     if _core_changed(obs):
-        return Cell("baseline", obs.call_id, (Outcome.RESULT_CHANGED,), hop="core", core=True,
-                    note="Hermes core changed the output (for example truncation); no plugin involved")
+        return Cell("baseline", obs.call_id, (Outcome.RESULT_CHANGED,), hop="core", core=True, note=CORE_NOTE)
     return Cell("baseline", obs.call_id, (Outcome.PASSED_THROUGH,))
+
+
+def _result_hop(obs: CallObservation, base: CallObservation, comparable: bool) -> str | None:
+    """Where a plugin changed the delivered result, judged against the baseline's DELIVERED result (TC05 fix)."""
+    if obs.tool_raw is not None and obs.delivered != obs.tool_raw and base.delivered == base.tool_raw:
+        return "tool_result"
+    if not comparable or obs.terminal_raw != base.terminal_raw or obs.delivered == base.delivered:
+        return None
+    return "tool_result" if obs.tool_raw == base.tool_raw else "terminal_output"
 
 
 def classify(column: str, obs: CallObservation, base: CallObservation, unstable: bool) -> Cell:
@@ -304,13 +314,17 @@ def classify(column: str, obs: CallObservation, base: CallObservation, unstable:
     if rewrote:
         outcomes.append(Outcome.REWROTE)
         hop = "args-inplace" if inplace else "args"
-    if obs.tool_raw is not None and obs.delivered != obs.tool_raw and base.delivered == base.tool_raw:
+    result_hop = _result_hop(obs, base, not rewrote and not unstable)
+    if result_hop is not None:
         outcomes.append(Outcome.RESULT_CHANGED)
-        hop = "tool_result"
-    elif not rewrote and not unstable and obs.terminal_raw == base.terminal_raw and obs.tool_raw != base.tool_raw:
-        outcomes.append(Outcome.RESULT_CHANGED)
-        hop = "terminal_output"
-    return Cell(column, obs.call_id, tuple(outcomes) or (Outcome.PASSED_THROUGH,), hop=hop, unstable=unstable)
+        hop = result_hop
+    core_base = not rewrote and classify_baseline(base).core and _gate_outcome(base) is None
+    if core_base and result_hop is None:
+        return Cell(column, obs.call_id, (Outcome.RESULT_CHANGED,), hop="core", core=True, unstable=unstable,
+                    note=CORE_NOTE)
+    return Cell(column, obs.call_id, tuple(outcomes) or (Outcome.PASSED_THROUGH,), hop=hop, unstable=unstable,
+                core_also=core_base)
+
 
 # File: proving_ground/matrix.py  (part 3 of 3: attribution, findings, assembly)
 
@@ -357,7 +371,8 @@ def _masked(stack: Mapping[str, Cell], solos: Mapping[str, Mapping[str, Cell]]) 
         for cid, cell in cells.items():
             if cell.core:  # Hermes core's own effect (e.g. the approval gate), not the plugin's
                 continue
-            for outcome in set(cell.outcomes) - QUIET - set(stack[cid].outcomes):
+            reached = set() if stack[cid].core else set(stack[cid].outcomes)  # a core-only stack cell: no plugin effect
+            for outcome in set(cell.outcomes) - QUIET - reached:
                 found.append(Finding("MASKED_IN_STACK", cid, (key,),
                                      f"{key} {LABELS[outcome]} {cid} on its own; in the full stack that effect "
                                      "does not reach the model."))
@@ -392,8 +407,7 @@ def _load_failed_cell(cell: Cell, col: ColumnRun) -> Cell:
     note = f"not confirmed loaded in the child: {', '.join(col.load_failed)}"
     if col.name.startswith("solo:") or cell.primary in QUIET:
         return Cell(cell.column, cell.call_id, (Outcome.LOAD_FAILED,), note=note)
-    return Cell(cell.column, cell.call_id, cell.outcomes, cell.hop, cell.core, cell.unstable,
-                "; ".join(filter(None, [cell.note, note])))
+    return replace(cell, note="; ".join(filter(None, [cell.note, note])))
 
 
 def _column_cells(col: ColumnRun, base: ColumnRun, unstable: frozenset[str]) -> dict[str, Cell]:

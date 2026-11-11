@@ -60,7 +60,8 @@ def provenance(column: str) -> str:
 
 def cell_label(cell: mx.Cell) -> str:
     label = " + ".join(mx.LABELS[o] for o in sorted(cell.outcomes, key=mx.PRECEDENCE.index))
-    return label + (" (core)" if cell.core else "") + (" ~" if cell.unstable else "")
+    core = " (core)" if cell.core else " (core + plugin)" if cell.core_also else ""
+    return label + core + (" ~" if cell.unstable else "")
 
 
 def column_title(name: str) -> str:
@@ -94,7 +95,8 @@ def notable_cells(m: mx.Matrix) -> list[str]:
 
 def matrix_to_dict(m: mx.Matrix) -> dict[str, Any]:
     cells = [{"column": c.column, "call_id": c.call_id, "outcomes": [o.value for o in c.outcomes],
-              "primary": c.primary.value, "hop": c.hop, "core": c.core, "unstable": c.unstable, "note": c.note,
+              "primary": c.primary.value, "hop": c.hop, "core": c.core, "core_also": c.core_also,
+              "unstable": c.unstable, "note": c.note,
               "provenance": provenance(c.column)}
              for c in m.cells.values()]
     calls = [{**asdict(c), "expect": {k: list(v) for k, v in (c.expect or {}).items()}} for c in m.calls]
@@ -112,7 +114,8 @@ def matrix_to_dict(m: mx.Matrix) -> dict[str, Any]:
 
 def _cell_from(raw: Mapping[str, Any]) -> mx.Cell:
     return mx.Cell(raw["column"], raw["call_id"], tuple(mx.Outcome(o) for o in raw["outcomes"]),
-                   raw.get("hop"), bool(raw.get("core")), bool(raw.get("unstable")), raw.get("note", ""))
+                   raw.get("hop"), bool(raw.get("core")), bool(raw.get("unstable")), raw.get("note", ""),
+                   bool(raw.get("core_also")))
 
 
 def _call_from(raw: Mapping[str, Any]) -> mx.CallInfo:

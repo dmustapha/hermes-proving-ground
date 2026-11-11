@@ -24,7 +24,8 @@ def test_fixture_like_outcomes() -> None:
 def test_core_truncation_is_never_blamed() -> None:
     m = fixture_like_matrix()
     assert m.cell("baseline", "TC05").core
-    assert primary(m, "stack", "TC05") is Outcome.PASSED_THROUGH
+    # debug P2 (TC05): the stack shows the same core label as the baseline, and core is still never blamed
+    assert primary(m, "stack", "TC05") is Outcome.RESULT_CHANGED and m.cell("stack", "TC05").core
 
 
 def test_attribution_names_the_solo_plugin() -> None:
