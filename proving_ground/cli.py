@@ -117,8 +117,10 @@ def refuse_unknown(code: str, what: str, asked: Sequence[str], known: Sequence[s
 def select_subjects(args: argparse.Namespace, settings: runner.RunnerSettings) -> tuple[list[runner.PluginSource], list[tuple[str, str]]]:
     without = list(getattr(args, "without", None) or ())
     if getattr(args, "fixtures", False):
-        refuse_unknown("UNKNOWN_PLUGIN", "plugin", without, safety.FIXTURE_KEYS)
-        return runner.fixture_subjects(settings.pg_source, without), []
+        extended = getattr(args, "fixtures", None) == "extended"
+        known = runner.fixture_subjects(settings.pg_source, extended=extended)
+        refuse_unknown("UNKNOWN_PLUGIN", "plugin", without, [s.key for s in known])
+        return runner.fixture_subjects(settings.pg_source, without, extended=extended), []
     from hermes_constants import get_hermes_home
 
     subjects, skipped = runner.discover_subjects(Path(get_hermes_home()), user_config())
@@ -636,7 +638,9 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
     subparser.add_argument("target", nargs="?", default=None, help="the second report for `diff`")
     subparser.add_argument("--column", default=None,
                            help="column for `show`: baseline, stack, solo:<plugin> or just the plugin name")
-    subparser.add_argument("--fixtures", action="store_true", help="use the bundled three-plugin demo stack")
+    subparser.add_argument("--fixtures", nargs="?", const="demo", default=None, choices=("demo", "extended"),
+                           help="use the bundled three-plugin demo stack; `--fixtures extended` adds the fourth demo "
+                                "plugin under fixtures/extended (put action words like `show` before this flag)")
     subparser.add_argument("--without", action="append", metavar="PLUGIN", help="leave a plugin out (repeatable)")
     subparser.add_argument("--only", action="append", metavar="CALL", help="run only these test calls (repeatable)")
     subparser.add_argument("--calls", default=None, metavar="FILE",
@@ -708,7 +712,8 @@ def handle_cli(args: argparse.Namespace) -> int:
 def _slash_args(raw: str) -> argparse.Namespace:
     words = raw.split()
     show = bool(words) and words[0] == "show"
-    return argparse.Namespace(action="show" if show else "run", fixtures="fixtures" in words,
+    fixtures = ("extended" if "extended" in words else True) if "fixtures" in words else False
+    return argparse.Namespace(action="show" if show else "run", fixtures=fixtures,
                               call=words[1] if show and len(words) > 1 else None,
                               column=words[2] if show and len(words) > 2 else None, without=None, only=None,
                               jobs=DEFAULT_JOBS, timeout=120.0, hermes_bin=None, json_out=None, markdown_out=None,

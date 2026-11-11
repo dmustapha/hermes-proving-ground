@@ -38,11 +38,8 @@ LOAD_ORDER = ("fx_guard", "fx_redactor", "fx_rewriter", "fx_trimmer")
 
 
 def extended_subjects(without: tuple[str, ...] = ()) -> list[runner.PluginSource]:
-    """What `--fixtures extended` would select: the base demo plugins plus every plugin under fixtures/extended."""
-    base = runner.fixture_subjects(ROOT, without)
-    extra = [runner.PluginSource(p.name, p) for p in sorted(EXTENDED.iterdir())
-             if (p / "plugin.yaml").is_file() and p.name not in without]
-    return runner.load_order(base + extra)
+    """What `--fixtures extended` selects: the base demo plugins plus every plugin under fixtures/extended."""
+    return runner.fixture_subjects(ROOT, without, extended=True)
 
 
 def _settings() -> runner.RunnerSettings:
@@ -112,3 +109,28 @@ def test_trimmer_contract_fails_in_the_stack_and_clears_without_the_redactor(dri
     assert cleared.cell("stack", "TC04").primary is Outcome.RESULT_CHANGED
     assert not any(f.kind == "MASKED_IN_STACK" for f in cleared.findings)
     assert cli.exit_code_for(cleared, check=True) == 0
+
+
+@pytest.mark.hermes
+def test_fixtures_extended_through_the_cli_reports_both_cross_plugin_findings(monkeypatch, tmp_path, capsys) -> None:
+    """The real `--fixtures extended` option, parsed and run by the CLI; the saved report goes to a temp file."""
+    import argparse
+    import json
+    import sys
+    import types
+
+    stub = types.ModuleType("cron.execution_identity")
+    stub.current_cron_execution = lambda: None
+    monkeypatch.setitem(sys.modules, "cron", types.ModuleType("cron"))
+    monkeypatch.setitem(sys.modules, "cron.execution_identity", stub)
+    monkeypatch.setattr(cli, "user_config", lambda: {})
+    monkeypatch.setattr(cli, "save", lambda _m: tmp_path / "saved.json")
+    parser = argparse.ArgumentParser()
+    cli.setup_parser(parser)
+    out = tmp_path / "extended.json"
+    args = parser.parse_args(["--fixtures", "extended", "--quiet", "--no-color", "--json", str(out)])
+    assert args.fixtures == "extended"
+    assert cli.handle_cli(args) == 0, capsys.readouterr().out
+    exported = json.loads(out.read_text(encoding="utf-8"))
+    assert [f["kind"] for f in exported["findings"]] == ["REWRITE_UNSEEN_BY", "MASKED_IN_STACK"]
+    assert "solo:fx_redactor" in exported["columns"]

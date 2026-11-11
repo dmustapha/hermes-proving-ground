@@ -788,9 +788,13 @@ def discover_subjects(hermes_home: Path, config: Mapping[str, Any]) -> tuple[lis
     return load_order(subjects), skipped
 
 
-def fixture_subjects(pg_source: Path, without: Sequence[str] = ()) -> list[PluginSource]:
-    keys = [k for k in safety.FIXTURE_KEYS if k not in set(without)]
-    return [PluginSource(k, pg_source / "fixtures" / k) for k in keys]
+def fixture_subjects(pg_source: Path, without: Sequence[str] = (), extended: bool = False) -> list[PluginSource]:
+    """The bundled demo stack; `extended` adds every plugin directory under fixtures/extended."""
+    subjects = [PluginSource(k, pg_source / "fixtures" / k) for k in safety.FIXTURE_KEYS]
+    if extended:
+        extra = sorted(p for p in (pg_source / "fixtures" / "extended").iterdir() if (p / "plugin.yaml").is_file())
+        subjects += [PluginSource(p.name, p, requires=_requires(_manifest(p))) for p in extra]
+    return load_order([s for s in subjects if s.key not in set(without)])
 
 
 def _solo_plugins(source: PluginSource, runnable: Sequence[PluginSource]) -> tuple[PluginSource, ...]:
