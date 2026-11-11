@@ -59,3 +59,12 @@ def test_notable_cells_lists_effects() -> None:
                for line in lines)
     assert any(line.startswith("TC05 --column baseline") and line.endswith("RESULT CHANGED (core)") for line in lines)
     assert report.forbidden_claims(text) == []
+
+
+def test_rewrite_unseen_finding_leads_with_plain_words() -> None:
+    # PRD 6.1 scene 3 and 1.8: the harm in plain words comes before the REWRITE_UNSEEN_BY token, in every format.
+    m = fixture_like_matrix()
+    lead = "In plain words: fx_guard approved a command it never saw, and that command ran."
+    for text in (report.render_terminal(m, color=False), report.render_markdown(m), report.render_html(m)):
+        assert lead in text
+        assert text.index(lead) < text.index("REWRITE_UNSEEN_BY")

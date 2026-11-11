@@ -247,9 +247,18 @@ def _plain_table(m: mx.Matrix, color: bool) -> str:
     return "\n".join(lines)
 
 
+def _plain_lead(m: mx.Matrix, f: mx.Finding) -> list[str]:
+    """PRD 1.8: the practical harm in plain words comes before the REWRITE_UNSEEN_BY token."""
+    if f.kind != "REWRITE_UNSEEN_BY" or not f.plugins:
+        return []
+    tool = next((c.tool for c in m.calls if c.id == f.call_id), "")
+    noun = "command" if tool == "terminal" else "call"
+    return [f"• In plain words: {f.plugins[-1]} approved a {noun} it never saw, and that {noun} ran."]
+
+
 def _footer_lines(m: mx.Matrix) -> list[str]:
     lines = [mx.tally(m)]
-    lines += [f"• {f.kind}: {f.text}" for f in m.findings]
+    lines += [line for f in m.findings for line in (*_plain_lead(m, f), f"• {f.kind}: {f.text}")]
     lines += [f"• attribution {a.call_id} {mx.LABELS[a.outcome]}: {a.kind} — {a.note}" for a in m.attributions]
     lines += [f"• skipped {key}: {why}" for key, why in m.skipped]
     lines += [f"• column {col} stopped: DRILL_ABORTED ({why})" for col, why in m.aborted.items()]
