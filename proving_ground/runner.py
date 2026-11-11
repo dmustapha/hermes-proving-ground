@@ -621,12 +621,42 @@ def sweep_stale_roots(temp_base: Path, max_age_s: float | None = None) -> list[P
     return removed
 
 
+def _drill_home_of(pid: int, temp_base: Path) -> Path | None:
+    """The PG drill HERMES_HOME named in this process's environment, or None."""
+    try:
+        out = subprocess.run(["ps", "eww", "-p", str(pid)], capture_output=True, text=True, timeout=15, check=False)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    match = re.search(r"HERMES_HOME=(" + re.escape(f"{temp_base}/{safety.ROOT_PREFIX}") + r"[a-z0-9_]{8}/home)(?:\s|$)",
+                      out.stdout)
+    return Path(match.group(1)) if match else None
+
+
+def reap_orphans(temp_base: Path) -> list[int]:
+    """Stop drill processes whose root is already removed: a gateway daemon a killed child had just asked launchd
+    for can start after that column's cleanup scan. Its root is gone, so nothing else will ever stop it."""
+    orphans = [pid for pid in _ps_candidates()
+               if (home := _drill_home_of(pid, temp_base)) is not None and not home.parent.exists()]
+    _signal_all(orphans, signal.SIGTERM)
+    deadline = time.monotonic() + KILL_GRACE_S
+    while time.monotonic() < deadline and any(safety.pid_alive(p) for p in orphans):
+        time.sleep(0.1)
+    _signal_all([p for p in orphans if safety.pid_alive(p)], signal.SIGKILL)
+    return orphans
+
+
+def _ours(root: Path) -> bool:
+    """A root this process created (its owner marker names our pid)."""
+    marker = safety.read_owner_marker(root)
+    return marker is not None and marker[0] == os.getpid()
+
+
 def leftovers(temp_base: Path) -> tuple[int, int]:
-    """(processes whose env names a PG root home, PG-marked roots on disk) right now; the report records both."""
-    needle = f"HERMES_HOME={temp_base}/{safety.ROOT_PREFIX}"
-    procs = [pid for pid in _ps_candidates() if _env_contains(pid, needle)]
-    roots = [r for r in temp_base.glob(safety.ROOT_PREFIX + "*")
-             if safety.ROOT_NAME.match(r.name) and safety.read_owner_marker(r) is not None]
+    """(this drill's processes still running, this drill's PG-marked roots still on disk) right now; the report
+    records both. Another drill running at the same time in the same temp dir is not counted as ours."""
+    procs = [pid for pid in _ps_candidates()
+             if (home := _drill_home_of(pid, temp_base)) is not None and (not home.parent.exists() or _ours(home.parent))]
+    roots = [r for r in temp_base.glob(safety.ROOT_PREFIX + "*") if safety.ROOT_NAME.match(r.name) and _ours(r)]
     return len(procs), len(roots)
 
 

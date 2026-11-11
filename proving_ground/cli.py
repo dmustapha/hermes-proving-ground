@@ -168,6 +168,7 @@ def run_matrix(args: argparse.Namespace, on_partial: Callable[[report.LiveFrame]
             on_partial(live_frame(done, planned, infos, version, started))
 
     drill = runner.run_drill(subjects, templates, settings, partial, skipped)
+    runner.reap_orphans(settings.temp_base)
     return assemble(drill, infos, version, started, runner.leftovers(settings.temp_base)), note
 
 
