@@ -6,6 +6,12 @@
 # None-returning transform hooks observe raw values; post_tool_call args are the final effective args (both observed
 # in probe runs). The injected tool_call id reaches every call hook as tool_call_id; matrix.py treats
 # an event whose id matches no drill call as TOOL_CALL_ID_MISMATCH (never matched by order).
+# Context and reply wire (--all-wires only): pre_llm_call(session_id, task_id, turn_id, user_message,
+# conversation_history, is_first_turn, model, platform, ...) agent/turn_context.py:919-931, whose {"context": ...}
+# returns are appended to the user message (turn_context.py:942-964, compose_user_api_content :126-137);
+# transform_llm_output(response_text, session_id, model, platform, turn_id) agent/turn_finalizer.py:535-543, where the
+# first non-empty string wins, so a None-returning tap sees the reply as the model produced it;
+# post_llm_call(..., assistant_response=final_response) turn_finalizer.py:494-505 carries the reply after the transform.
 """Observer hooks for the drill child. Records; never changes a result."""
 from __future__ import annotations
 
@@ -19,7 +25,6 @@ from typing import Any, Callable, Mapping
 
 from . import safety
 
-EVENTS_FILENAME = "events.jsonl"
 PIN_BLOCK_MESSAGE = "PROVINGGROUND: the harness refused its own call (outside the sandbox)"
 TOOL_BLOCK_MESSAGE = "PROVINGGROUND: the harness refused its own call (tool not on the drill allow-list)"
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -48,12 +53,13 @@ class EventLog:
 
 
 def load_plan(state_dir: Path) -> dict[str, Any]:
-    return json.loads((state_dir / "plan.json").read_text(encoding="utf-8"))
+    return json.loads((state_dir / safety.PLAN_FILENAME).read_text(encoding="utf-8"))
 
 
-def _abort(state_dir: Path, log: EventLog, reason: str) -> None:
+def write_abort(state_dir: Path, log: EventLog, reason: str) -> None:
+    """Stop the drill: the ABORT file makes every later scripted step reply DRILL_ABORTED. Never raises."""
     try:
-        (state_dir / "ABORT").write_text(reason, encoding="utf-8")
+        (state_dir / safety.ABORT_FILENAME).write_text(reason, encoding="utf-8")
     except OSError:
         pass
     log.write("abort", reason=reason)
@@ -68,10 +74,10 @@ def make_hooks(state_dir: Path, sandbox: Path, log: EventLog) -> dict[str, Calla
         injected = _as_args(args)
         log.write("pre_tool_call", tool=tool_name, args=injected, tool_call_id=tool_call_id)
         if tool_name not in safety.ALLOWED_TOOLS:
-            _abort(state_dir, log, "TOOL_NOT_ALLOWED")
+            write_abort(state_dir, log, "TOOL_NOT_ALLOWED")
             return {"action": "block", "message": TOOL_BLOCK_MESSAGE}
         if safety.escape_reasons(injected, sandbox):
-            _abort(state_dir, log, "INJECTED_OUTSIDE_SANDBOX")
+            write_abort(state_dir, log, "INJECTED_OUTSIDE_SANDBOX")
             return {"action": "block", "message": PIN_BLOCK_MESSAGE}
         return None
 
@@ -94,7 +100,7 @@ def make_hooks(state_dir: Path, sandbox: Path, log: EventLog) -> dict[str, Calla
         reasons = safety.escape_reasons(final, sandbox)
         if reasons:
             log.write("escaped", tool_call_id=tool_call_id, reasons=reasons, args=final)
-            _abort(state_dir, log, "ESCAPED")
+            write_abort(state_dir, log, "ESCAPED")
 
     def approval_observer(hook: str) -> Callable[..., None]:
         def observe(**fields: Any) -> None:
@@ -108,6 +114,35 @@ def make_hooks(state_dir: Path, sandbox: Path, log: EventLog) -> dict[str, Calla
             "transform_terminal_output": transform_terminal_output,
             "pre_approval_request": approval_observer("pre_approval_request"),
             "post_approval_response": approval_observer("post_approval_response")}
+
+
+WIRE_HOOK_NAMES: tuple[str, ...] = ("pre_llm_call", "transform_llm_output", "post_llm_call")
+WIRE_TEXT_CAP = 32 * 1024  # each recorded context or reply text is clipped to this many characters
+
+
+def clip_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else str(value)
+    return text if len(text) <= WIRE_TEXT_CAP else text[:WIRE_TEXT_CAP] + f" …[{len(text) - WIRE_TEXT_CAP} more chars]"
+
+
+def make_wire_hooks(log: EventLog) -> dict[str, Callable[..., None]]:
+    """Taps for the context and reply wire. Each returns None, so none of them adds context or rewrites a reply."""
+    def pre_llm_call(user_message: Any = None, is_first_turn: Any = None, **_: Any) -> None:
+        log.write("pre_llm_call", user_message=clip_text(user_message), is_first_turn=is_first_turn)
+        return None
+
+    def transform_llm_output(response_text: Any = None, **_: Any) -> None:
+        log.write("reply_raw", text=clip_text(response_text))
+        return None
+
+    def post_llm_call(assistant_response: Any = None, **_: Any) -> None:
+        log.write("reply_delivered", text=clip_text(assistant_response))
+        return None
+
+    return {"pre_llm_call": pre_llm_call, "transform_llm_output": transform_llm_output,
+            "post_llm_call": post_llm_call}
 
 
 def _connect_target(args: tuple[Any, ...]) -> tuple[str, bool]:

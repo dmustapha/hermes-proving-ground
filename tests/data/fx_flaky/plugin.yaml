@@ -1,0 +1,6 @@
+# File: tests/data/fx_flaky/plugin.yaml
+name: fx_flaky
+version: "0.1.0"
+description: "Test-only: blocks the plain marker on odd visits only, to show solo runs that disagree."
+author: dmustapha
+provides_hooks: [pre_tool_call]

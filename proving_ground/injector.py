@@ -7,15 +7,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
-from .observer import EventLog
+from . import safety
+from .observer import EventLog, clip_text, load_plan, write_abort
 
 ABORT_SENTINEL = "PROVINGGROUND DRILL_ABORTED"
 DONE_SENTINEL = "PROVINGGROUND DRILL_DONE"
-SCRIPTED_MODEL = "provingground-scripted"
-PLAN_FILENAME = "plan.json"
-ABORT_FILENAME = "ABORT"
 
 
 def _usage() -> dict[str, int]:
@@ -32,13 +30,13 @@ def tool_call_body(index: int, call: dict[str, Any]) -> dict[str, Any]:
     tool_call = {"id": call["call_ref"], "type": "function",
                  "function": {"name": call["tool"], "arguments": json.dumps(call["args"])}}
     message = {"role": "assistant", "content": None, "tool_calls": [tool_call]}
-    return {"id": f"pg-{index}", "object": "chat.completion", "created": 0, "model": SCRIPTED_MODEL,
+    return {"id": f"pg-{index}", "object": "chat.completion", "created": 0, "model": safety.SCRIPTED_MODEL,
             "choices": [{"index": 0, "finish_reason": "tool_calls", "message": message}], "usage": _usage()}
 
 
 def final_body(text: str) -> dict[str, Any]:
     message = {"role": "assistant", "content": text}
-    return {"id": "pg-final", "object": "chat.completion", "created": 0, "model": SCRIPTED_MODEL,
+    return {"id": "pg-final", "object": "chat.completion", "created": 0, "model": safety.SCRIPTED_MODEL,
             "choices": [{"index": 0, "finish_reason": "stop", "message": message}], "usage": _usage()}
 
 
@@ -46,18 +44,28 @@ def completed_steps(messages: list[Any]) -> int:
     return sum(1 for m in messages if isinstance(m, dict) and m.get("role") == "assistant" and m.get("tool_calls"))
 
 
-def write_abort(state_dir: Path, log: EventLog, reason: str) -> None:
-    try:
-        (state_dir / ABORT_FILENAME).write_text(reason, encoding="utf-8")
-        log.write("abort", reason=reason)
-    except OSError:
-        return
+def _content_text(content: Any) -> str:
+    """A message's text: a string as is, a list of content parts joined by their text fields."""
+    if isinstance(content, list):
+        return "\n".join(str(p.get("text", "")) for p in content if isinstance(p, dict) and p.get("type") == "text")
+    return "" if content is None else str(content)
+
+
+def context_view(request: Mapping[str, Any], messages: list[Any]) -> dict[str, Any]:
+    """What this step sends the model besides tool results and PROVING GROUND's own scripted tool calls: the system
+    and user messages, any assistant text, and the names of the tools offered (--all-wires only)."""
+    kept = [{"role": str(m.get("role")), "content": clip_text(_content_text(m.get("content")))}
+            for m in messages if isinstance(m, dict) and m.get("role") in ("system", "user", "assistant")
+            and not m.get("tool_calls")]
+    tools = request.get("tools") if isinstance(request.get("tools"), list) else []
+    names = sorted({str((t.get("function") or {}).get("name")) for t in tools if isinstance(t, dict)})
+    return {"messages": kept, "tools": names}
 
 
 def scripted_reply(request: Any, state_dir: Path, log: EventLog,
                    loaded_probe: Callable[[str], bool] | None = None,
                    order_probe: Callable[[], Any] | None = None) -> dict[str, Any]:
-    abort_path = state_dir / ABORT_FILENAME
+    abort_path = state_dir / safety.ABORT_FILENAME
     if abort_path.exists():
         reason = abort_path.read_text(encoding="utf-8").strip() or "ABORTED"
         return final_body(f"{ABORT_SENTINEL} {reason}")
@@ -65,10 +73,12 @@ def scripted_reply(request: Any, state_dir: Path, log: EventLog,
     if not isinstance(messages, list):
         write_abort(state_dir, log, "REFUSED_API_MODE")
         return final_body(f"{ABORT_SENTINEL} REFUSED_API_MODE")
-    plan = json.loads((state_dir / PLAN_FILENAME).read_text(encoding="utf-8"))
+    plan = load_plan(state_dir)
     calls = plan["calls"]
     done = completed_steps(messages)
     log.write("llm_execution", step=done, n_messages=len(messages), provider_called=False)
+    if plan.get("wires"):
+        log.write("llm_context", step=done, **context_view(request, messages))
     if done == 0 and loaded_probe is not None:
         expected = [str(k) for k in plan.get("subjects") or []]
         loaded = [k for k in expected if _safe_probe(loaded_probe, k)]
@@ -97,14 +107,29 @@ def _safe_probe(probe: Callable[[str], bool], key: str) -> bool:
         return False  # unknown load state is reported as LOAD FAILED, never as loaded
 
 
+def _fresh(reply: Any) -> Any:
+    """A copy of the prebuilt reply when it can make one (pydantic model_copy), otherwise the reply itself."""
+    try:
+        return reply.model_copy(deep=True)
+    except Exception:
+        return reply
+
+
 def make_llm_execution(state_dir: Path, log: EventLog, loaded_probe: Callable[[str], bool] | None = None,
                        order_probe: Callable[[], Any] | None = None) -> Callable[..., Any]:
+    """The last-resort reply is built here, at register time. Hermes takes only a ChatCompletion back from
+    llm_execution (agent/turn_api_call.py:139 hands it to the same intake as a provider response), and a callback that
+    raises is skipped to the next frame and finally to the provider (hermes_cli/middleware.py:206-214). Built up front,
+    the error path returns an object that already exists; if it cannot be built at all, register() fails, the child
+    never activates, and the runner reports NOT_ACTIVATED."""
+    last_resort = _completion(final_body(f"{ABORT_SENTINEL} INJECTOR_ERROR"))
+
     def llm_execution(request: Any = None, next_call: Any = None, **_kwargs: Any) -> Any:
         try:
             return _completion(scripted_reply(request, state_dir, log, loaded_probe, order_probe))
         except Exception as exc:  # middleware fails open; an exception here would reach the provider
             write_abort(state_dir, log, f"INJECTOR_ERROR:{type(exc).__name__}")
-            return _completion(final_body(f"{ABORT_SENTINEL} INJECTOR_ERROR"))
+            return _fresh(last_resort)
 
     llm_execution.__name__ = "provingground_llm_execution"
     return llm_execution

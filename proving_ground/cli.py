@@ -15,10 +15,11 @@ import sys
 import tempfile
 import threading
 import traceback
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from . import matrix, report, runner, safety, testcalls
+from . import matrix, report, runner, safety, seed, testcalls
 
 PG_SOURCE = Path(__file__).resolve().parent.parent
 REPORTS_SUBDIR = "reports"
@@ -31,6 +32,10 @@ EXPORT_FIELD_MAX = 8192  # characters per string in an exported JSON report; the
 EXPORT_CLIP_MARK = " …[{n} more characters clipped by PROVING GROUND: export field cap]"
 CHANGED_EXIT = 6  # --compare, --since-last, diff: at least one plugin, call, cell or finding changed
 FIXTURE_KEYS = ("fx_guard", "fx_rewriter", "fx_trimmer")
+REPEAT_MAX = 5  # --repeat N: each repeated solo column runs at most this many times
+# Columns in parallel. 5 holds the whole wave after the baseline of a three-plugin drill (baseline-repeat, three solos,
+# the stack): three fixture drills each took 25.4-28.7 s at 3 and 21.2-25.0 s at 5 on the build machine, same matrix.
+DEFAULT_JOBS = 5
 DEBUG_ENV = "PROVINGGROUND_DEBUG"  # set it to see the Python traceback instead of the one-line error
 
 
@@ -49,7 +54,16 @@ def build_settings(args: argparse.Namespace) -> runner.RunnerSettings:
         raise safety.Refusal("SANDBOX_UNSUPPORTED", f"temp dir {temp_base} is not under a system temp base.")
     return runner.RunnerSettings(hermes_bin=find_hermes(getattr(args, "hermes_bin", None)), pg_source=PG_SOURCE,
                                  warm_cache=temp_base / "provingground-cache" / "installs", temp_base=temp_base,
-                                 cell_timeout_s=float(getattr(args, "timeout", 120.0)), jobs=int(getattr(args, "jobs", 3)))
+                                 cell_timeout_s=float(getattr(args, "timeout", 120.0)), jobs=int(getattr(args, "jobs", DEFAULT_JOBS)),
+                                 wires=bool(getattr(args, "all_wires", False)),
+                                 pairs=bool(getattr(args, "pairs", False)), repeat=repeat_count(args))
+
+
+def repeat_count(args: argparse.Namespace) -> int:
+    repeat = getattr(args, "repeat", 1)
+    if not isinstance(repeat, int) or not 1 <= repeat <= REPEAT_MAX:
+        raise safety.Refusal("BAD_OPTION", f"--repeat takes a whole number from 1 to {REPEAT_MAX}, not {repeat}.")
+    return repeat
 
 
 def user_config() -> dict[str, Any]:
@@ -80,7 +94,7 @@ def refuse_unknown(code: str, what: str, asked: Sequence[str], known: Sequence[s
 def select_subjects(args: argparse.Namespace, settings: runner.RunnerSettings) -> tuple[list[runner.PluginSource], list[tuple[str, str]]]:
     without = list(getattr(args, "without", None) or ())
     if getattr(args, "fixtures", False):
-        refuse_unknown("UNKNOWN_PLUGIN", "plugin", without, FIXTURE_KEYS)
+        refuse_unknown("UNKNOWN_PLUGIN", "plugin", without, safety.FIXTURE_KEYS)
         return runner.fixture_subjects(settings.pg_source, without), []
     from hermes_constants import get_hermes_home
 
@@ -135,15 +149,49 @@ def credentials_line(notes: Sequence[str]) -> str:
     return base + f"; withheld from the copies: {'; '.join(notes[:4])}" + (" …" if len(notes) > 4 else "")
 
 
+WIRES_NOTE = ("context and reply recorded in every column (pre_llm_call, transform_llm_output and post_llm_call "
+              "taps that return nothing); two extra rows, not counted as test calls")
+
+
+def repeat_note(drill: runner.DrillRun, m: matrix.Matrix) -> str:
+    if not drill.repeats:
+        return f"{drill.repeat} runs asked; no solo column has a plugin effect, so none was run again"
+    stopped = sum(1 for runs in drill.repeats.values() for r in runs if r.abort_reason or r.load_failed)
+    unstable = sum(1 for cell in m.cells.values() if cell.varied)
+    names = ", ".join(n.removeprefix("solo:") for n in drill.repeats)
+    disagree = f"{unstable} cell disagrees" if unstable == 1 else f"{unstable} cells disagree"
+    why = ("every solo column, since an effect appears only in the full stack"
+           if any(a.kind == "interaction" for a in m.attributions) else "the solo columns with a plugin effect")
+    return (f"{drill.repeat} solo runs each of {names} ({why}); "
+            f"{disagree} between runs (UNSTABLE)"
+            + (f"; {stopped} repeat runs stopped and were not compared" if stopped else ""))
+
+
+def drill_options(drill: runner.DrillRun, infos: Sequence[matrix.CallInfo], m: matrix.Matrix) -> dict[str, str]:
+    """The opt-in options this drill ran with, as report lines; empty for a default drill."""
+    options = {"wires": WIRES_NOTE} if any(i.tool == matrix.WIRE_TOOL for i in infos) else {}
+    if drill.pair_total is not None:
+        options["pairs"] = drill.pair_note
+    if drill.repeat > 1:
+        options["repeat"] = repeat_note(drill, m)
+    return options
+
+
+def all_infos(templates: Sequence[testcalls.CallTemplate], settings: runner.RunnerSettings) -> list[matrix.CallInfo]:
+    return call_infos(templates) + (list(matrix.WIRE_CALLS) if settings.wires else [])
+
+
 def assemble(drill: runner.DrillRun, infos: Sequence[matrix.CallInfo], version: str, started: str,
              leftover: tuple[int, int] | None = None) -> matrix.Matrix:
     extra: dict[str, Any] = {"credentials": credentials_line(drill.copy_notes),
                              "approvals": runner.approvals_summary()}
     if leftover is not None:
         extra.update(leftover_processes=leftover[0], leftover_roots=leftover[1])
-    return matrix.build_matrix(drill.columns, drill.baseline_repeat, drill.crosscheck, infos, version, started,
-                               drill.wall_s, drill.skipped, drill.needs_env, load_order=drill.load_order,
-                               unreplayable=drill.unreplayable, conditions_extra=extra)
+    m = matrix.build_matrix(drill.columns, drill.baseline_repeat, drill.crosscheck, infos, version, started,
+                            drill.wall_s, drill.skipped, drill.needs_env, load_order=drill.load_order,
+                            unreplayable=drill.unreplayable, conditions_extra=extra, repeats=drill.repeats,
+                            pair_total=drill.pair_total)
+    return replace(m, options=drill_options(drill, infos, m))
 
 
 def planned_columns(subjects: Sequence[runner.PluginSource]) -> tuple[str, ...]:
@@ -160,7 +208,7 @@ def run_matrix(args: argparse.Namespace, on_partial: Callable[[report.LiveFrame]
     subjects, skipped = select_subjects(args, settings)
     templates = select_templates(args)
     ensure_warm(settings)
-    infos, planned, done = call_infos(templates), planned_columns(subjects), []
+    infos, planned, done = all_infos(templates, settings), planned_columns(subjects), []
     if on_partial is not None:
         on_partial(report.LiveFrame(tuple(infos), planned))
     version, started = runner.hermes_version(settings.hermes_bin, settings), now_iso()
@@ -172,7 +220,8 @@ def run_matrix(args: argparse.Namespace, on_partial: Callable[[report.LiveFrame]
 
     drill = runner.run_drill(subjects, templates, settings, partial, skipped)
     runner.reap_orphans(settings.temp_base)
-    return assemble(drill, infos, version, started, runner.leftovers(settings.temp_base)), note
+    leftover = runner.leftovers(settings.temp_base)
+    return assemble(drill, infos, version, started, leftover), note
 
 
 def live_frame(done: Sequence[matrix.ColumnRun], planned: Sequence[str], infos: Sequence[matrix.CallInfo],
@@ -457,6 +506,8 @@ def cmd_warm(args: argparse.Namespace) -> int:
         return 0 if warm else 3
     check_live_posture(user_config(), None)  # warm spawns a child too: same refusals as run
     settings = build_settings(args)
+    if getattr(args, "warm_from", None):
+        return warm_from(settings, Path(args.warm_from))
     print(runner.WARM_DISCLOSURE.format(cache=settings.warm_cache), flush=True)
     runner.install_cancellation()
     run = runner.warm_up(settings)
@@ -464,6 +515,30 @@ def cmd_warm(args: argparse.Namespace) -> int:
         raise runner.warm_failure(run)
     print("ready")
     return 0
+
+
+def warm_from(settings: runner.RunnerSettings, source: Path) -> int:
+    """Offline warm-up: copy an existing Hermes installs dir into the private cache (the source is only read)."""
+    if runner.is_warm(settings):
+        print(f"warm: runtime cache {settings.warm_cache} is already ready; nothing copied")
+        return 0
+    print(seed.SEED_DISCLOSURE.format(source=source, cache=settings.warm_cache), flush=True)
+    runner.install_cancellation()
+    result = seed.seed_cache(settings, source)
+    print(f"copied {len(result.installs)} install(s) ({', '.join(result.installs)}); {result.rewritten} record(s) "
+          f"pointed at the copy; checked with `hermes --version` in a throwaway home: {result.version}")
+    print("ready")
+    return 0
+
+
+def refuse_misplaced_options(args: argparse.Namespace) -> None:
+    """--from belongs to warm only, and not with --check (which never copies anything)."""
+    if not getattr(args, "warm_from", None):
+        return
+    if (getattr(args, "action", "run") or "run") != "warm":
+        raise safety.Refusal("BAD_OPTION", "--from is for `hermes provingground warm --from DIR` only.")
+    if getattr(args, "check", False):
+        raise safety.Refusal("BAD_OPTION", "--check only reports the cache state; drop --from, or drop --check.")
 
 
 def cmd_sweep(args: argparse.Namespace) -> int:
@@ -485,7 +560,8 @@ USAGE_EPILOG = """actions:
   show   the cells with an effect in the latest saved report; `show TC04 --column stack` prints one cell;
          `show --html PATH` (or --json / --markdown / --write-contract) exports the saved report again
   diff   `diff A.json B.json` prints only what changed between two saved reports (no drill)
-  warm   prepare the isolated Hermes runtime once (network); `warm --check` only reports whether it is ready
+  warm   prepare the isolated Hermes runtime once (network); `warm --check` only reports whether it is ready;
+         `warm --from ~/.hermes/installs` copies it from your Hermes install instead (no network, source only read)
   sweep  remove stale temporary drill roots left by an interrupted drill (only roots PROVING GROUND marked)
 
 examples:
@@ -544,7 +620,21 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
                            help="extra test calls (ids U…) and expect: contracts, same validator and grammar")
     subparser.add_argument("--check", action="store_true",
                            help="run: exit 5 unless every declared expect: is met; warm: only report cache state")
-    subparser.add_argument("--jobs", type=int, default=3, help="columns run in parallel (default 3)")
+    subparser.add_argument("--all-wires", action="store_true",
+                           help="also record the context sent to the model (pre_llm_call) and the final reply "
+                                "(transform_llm_output): two extra rows, CONTEXT ADDED and REPLY CHANGED")
+    subparser.add_argument("--pairs", action="store_true",
+                           help="for an effect seen only in the full stack, run pairs of plugins to name the smallest "
+                                f"set that reproduces it (at most {matrix.PAIR_CAP} pair columns)")
+    subparser.add_argument("--repeat", type=int, default=1, metavar="N",
+                           help=f"run each solo column with a plugin effect N times in all (1-{REPEAT_MAX}), every solo "
+                                "column when an effect appears only in the full stack; runs that disagree mark the "
+                                "cell UNSTABLE")
+    subparser.add_argument("--from", dest="warm_from", default=None, metavar="DIR",
+                           help="warm: copy the runtime from an existing Hermes installs dir (e.g. ~/.hermes/installs, "
+                                "only read) instead of downloading it")
+    subparser.add_argument("--jobs", type=int, default=DEFAULT_JOBS,
+                           help=f"columns run in parallel (default {DEFAULT_JOBS})")
     subparser.add_argument("--timeout", type=float, default=120.0, help="seconds per column before it is stopped")
     _add_report_options(subparser)
     subparser.add_argument("--hermes-bin", default=None, help="path to the hermes executable (default: on PATH)")
@@ -575,6 +665,7 @@ def write_crash_log(exc: BaseException) -> Path | None:
 def handle_cli(args: argparse.Namespace) -> int:
     """Every outcome ends in one readable line and an exit code, never a Python traceback."""
     try:
+        refuse_misplaced_options(args)
         return COMMANDS[getattr(args, "action", "run") or "run"](args)
     except safety.Refusal as refusal:
         print(f"{refusal.code}: {refusal.message}")
@@ -597,7 +688,7 @@ def _slash_args(raw: str) -> argparse.Namespace:
     return argparse.Namespace(action="show" if show else "run", fixtures="fixtures" in words,
                               call=words[1] if show and len(words) > 1 else None,
                               column=words[2] if show and len(words) > 2 else None, without=None, only=None,
-                              jobs=3, timeout=120.0, hermes_bin=None, json_out=None, markdown_out=None,
+                              jobs=DEFAULT_JOBS, timeout=120.0, hermes_bin=None, json_out=None, markdown_out=None,
                               html_out=None, no_color=True, quiet=True, calls=None, check=False)
 
 

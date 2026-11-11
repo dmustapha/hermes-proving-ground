@@ -17,5 +17,8 @@ provides_hooks:
   - transform_terminal_output
   - pre_approval_request
   - post_approval_response
+  - pre_llm_call
+  - transform_llm_output
+  - post_llm_call
 provides_middleware:
   - llm_execution

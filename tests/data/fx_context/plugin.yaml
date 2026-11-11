@@ -1,0 +1,6 @@
+# File: tests/data/fx_context/plugin.yaml
+name: fx_context
+version: "0.1.0"
+description: "Test-only: adds a fixed line of context to every turn with pre_llm_call."
+author: dmustapha
+provides_hooks: [pre_llm_call]

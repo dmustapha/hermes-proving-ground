@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import atexit
+import itertools
 import json
 import os
 import re
@@ -23,11 +24,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from . import matrix, safety, testcalls
+from . import injector, matrix, safety, testcalls
 
 DEAD_PROVIDER_URL = "http://127.0.0.1:9/v1"
 DEAD_PROXY = "http://127.0.0.1:9"
-SCRIPTED_MODEL = "provingground-scripted"
 DRILL_PROMPT = "run provingground wiring test"
 PG_PLUGIN_KEY = "proving-ground"
 WARM_MARKER = ".provingground-warm"
@@ -79,7 +79,10 @@ class RunnerSettings:
     warm_cache: Path
     temp_base: Path
     cell_timeout_s: float = 120.0
-    jobs: int = 3
+    jobs: int = 5
+    wires: bool = False  # --all-wires: children also record the context and reply wire
+    pairs: bool = False  # --pairs: pair columns for effects seen only in the full stack
+    repeat: int = 1  # --repeat N: solo columns with a plugin effect run N times in all
 
 
 @dataclass
@@ -95,6 +98,7 @@ class CellRun:
     recorded: list[str] = field(default_factory=list)
     output_tail: str = ""
     copy_notes: tuple[str, ...] = ()
+    wires: Mapping[str, Any] | None = None  # the plan's context-and-reply spec when the drill ran with --all-wires
 
 
 class Recorder:
@@ -161,7 +165,7 @@ def render_child_config(plugin_keys: Sequence[str], entries: Mapping[str, Any], 
     if entries:
         lines.append(f"  entries: {json.dumps(entries, sort_keys=True)}")
     lines += ["model:", '  provider: "custom"', f"  base_url: {json.dumps(DEAD_PROVIDER_URL)}",
-              f"  default: {json.dumps(SCRIPTED_MODEL)}"]
+              f"  default: {json.dumps(safety.SCRIPTED_MODEL)}"]
     lines += ["approvals:", '  mode: "manual"', "  timeout: 5", '  cron_mode: "deny"',
               '  single_query_mode: "deny"', '  unattended_mode: "deny"',
               "terminal:", '  backend: "local"', f"  cwd: {json.dumps(str(sandbox))}"]
@@ -195,7 +199,7 @@ def child_argv(launch: Path | Sequence[str], n_calls: int) -> list[str]:
     """`launch` is the hermes executable or the resolved interpreter prefix (launch_prefix)."""
     prefix = [str(launch)] if isinstance(launch, (str, Path)) else [str(a) for a in launch]
     return [*prefix, "chat", "-q", DRILL_PROMPT, "-Q", "-t", "terminal,file",
-            "--provider", "custom", "--base-url", DEAD_PROVIDER_URL, "-m", SCRIPTED_MODEL,
+            "--provider", "custom", "--base-url", DEAD_PROVIDER_URL, "-m", safety.SCRIPTED_MODEL,
             "--max-turns", str(n_calls + 2)]
 
 
@@ -302,10 +306,17 @@ def build_child_home(root: Path, spec: ColumnSpec, settings: RunnerSettings,
     state = home / safety.STATE_DIRNAME
     state.mkdir(parents=True, exist_ok=True)
     (state / safety.TOKEN_FILENAME).write_text(token, encoding="utf-8")
-    plan = {"sandbox": str(root / "sandbox"), "subjects": [s.key for s in spec.plugins],
-            "calls": [c.as_plan() for c in calls]}
-    (state / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    plan: dict[str, Any] = {"sandbox": str(root / "sandbox"), "subjects": [s.key for s in spec.plugins],
+                            "calls": [c.as_plan() for c in calls]}
+    if settings.wires:
+        plan["wires"] = wire_spec(settings)
+    (state / safety.PLAN_FILENAME).write_text(json.dumps(plan), encoding="utf-8")
     return home
+
+
+def wire_spec(settings: RunnerSettings) -> dict[str, str] | None:
+    """What the scripted turn sends and replies, for the context and reply wire; None without --all-wires."""
+    return {"prompt": DRILL_PROMPT, "reply": injector.DONE_SENTINEL} if settings.wires else None
 
 
 def seed_sandbox(sandbox: Path, calls: Sequence[testcalls.DrillCall]) -> None:
@@ -316,30 +327,31 @@ def seed_sandbox(sandbox: Path, calls: Sequence[testcalls.DrillCall]) -> None:
             target.write_text(text, encoding="utf-8")
 
 # File: proving_ground/runner.py  (part 3 of 5: spawn, watch, kill, cancel)
-# env-match kill of the detached per-home daemon: `ps eww -p PID` matched on HERMES_HOME=<home>
+# env-match kill of the detached per-home daemon: the process environment matched on HERMES_HOME=<home>
 # (a probe run showed the daemon must be killed after each run); daemon command contains hermes_cli (gateway_runtime_start.py:62-63).
+# One BSD-style `ps axeww` scan lists every process with its environment appended (the dash form `-axeww` prints no
+# environment on macOS); each cleanup reads it once instead of one `ps eww -p PID` per candidate.
 # process-group timeout path and ESCAPED early kill (tests/test_cleanup.py, tests/test_escape_abort.py).
+PS_ENV_ARGV = ("ps", "axeww", "-o", "pid=,command=")
 
 
-def _ps_candidates() -> list[int]:
+def _ps_env_table() -> dict[int, str]:
+    """pid -> command line plus environment, for every hermes or python process except this one; {} when ps fails."""
     try:
-        out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True, timeout=15, check=False)
+        out = subprocess.run(list(PS_ENV_ARGV), capture_output=True, text=True, timeout=15, check=False)
     except (subprocess.SubprocessError, OSError):
-        return []
-    pids: list[int] = []
+        return {}
+    table: dict[int, str] = {}
     for line in out.stdout.splitlines():
-        pid_text, _, command = line.strip().partition(" ")
-        if pid_text.isdigit() and int(pid_text) != os.getpid() and ("hermes" in command or "python" in command):
-            pids.append(int(pid_text))
-    return pids
+        pid_text, _, text = line.strip().partition(" ")
+        if pid_text.isdigit() and int(pid_text) != os.getpid() and ("hermes" in text or "python" in text):
+            table[int(pid_text)] = text
+    return table
 
 
-def _env_contains(pid: int, needle: str) -> bool:
-    try:
-        out = subprocess.run(["ps", "eww", "-p", str(pid)], capture_output=True, text=True, timeout=15, check=False)
-    except (subprocess.SubprocessError, OSError):
-        return False
-    return needle in out.stdout
+def names_home(text: str, home: Path | str) -> bool:
+    """True when this process text carries exactly HERMES_HOME=<home> as one environment word."""
+    return re.search(r"(?:^|\s)HERMES_HOME=" + re.escape(str(home)) + r"(?=\s|$)", text) is not None
 
 
 def _signal_all(pids: Sequence[int], sig: int) -> None:
@@ -352,14 +364,18 @@ def _signal_all(pids: Sequence[int], sig: int) -> None:
 
 def kill_home_processes(home: Path) -> list[int]:
     """Terminate every process whose environment names this exact child HERMES_HOME."""
-    needle = f"HERMES_HOME={home}"
-    victims = [pid for pid in _ps_candidates() if _env_contains(pid, needle)]
-    _signal_all(victims, signal.SIGTERM)
-    deadline = time.monotonic() + KILL_GRACE_S
-    while time.monotonic() < deadline and any(safety.pid_alive(p) for p in victims):
-        time.sleep(0.1)
-    _signal_all([p for p in victims if safety.pid_alive(p)], signal.SIGKILL)
+    victims = [pid for pid, text in _ps_env_table().items() if names_home(text, home)]
+    _terminate(victims)
     return victims
+
+
+def _terminate(pids: Sequence[int]) -> None:
+    """SIGTERM, up to KILL_GRACE_S for them to exit, then SIGKILL for any still alive."""
+    _signal_all(pids, signal.SIGTERM)
+    deadline = time.monotonic() + KILL_GRACE_S
+    while time.monotonic() < deadline and any(safety.pid_alive(p) for p in pids):
+        time.sleep(0.1)
+    _signal_all([p for p in pids if safety.pid_alive(p)], signal.SIGKILL)
 
 
 def _kill_group(proc: subprocess.Popen) -> None:
@@ -438,7 +454,7 @@ def spawn_and_watch(root: Path, n_calls: int, settings: RunnerSettings, token: s
                     *, network: bool = False) -> tuple[int | None, str | None]:
     if CANCEL.is_set():
         raise Cancelled("cancelled before spawn")
-    events_path = root / "home" / safety.STATE_DIRNAME / "events.jsonl"
+    events_path = root / "home" / safety.STATE_DIRNAME / safety.EVENTS_FILENAME
     with (root / "child.log").open("wb") as log:
         proc = subprocess.Popen(child_argv(launch_prefix(settings), n_calls),
                                 env=child_env(os.environ, root, token, network=network),
@@ -497,7 +513,7 @@ def _event_from(line: str) -> dict[str, Any] | None:
 
 def read_events(home: Path, max_bytes: int = EVENTS_MAX_BYTES) -> list[dict[str, Any]]:
     """At most *max_bytes* of events.jsonl; a longer log adds a LOG_LIMIT abort instead of loading it all."""
-    path = home / safety.STATE_DIRNAME / "events.jsonl"
+    path = home / safety.STATE_DIRNAME / safety.EVENTS_FILENAME
     events: list[dict[str, Any]] = []
     try:
         with path.open("rb") as handle:
@@ -555,7 +571,7 @@ def _keep_logs(root: Path, spec: ColumnSpec, temp_base: Path) -> None:
     try:
         ensure_private_dir(target, "logs dir")
         for src, suffix in ((root / "child.log", "log"),
-                            (root / "home" / safety.STATE_DIRNAME / "events.jsonl", "events.jsonl")):
+                            (root / "home" / safety.STATE_DIRNAME / safety.EVENTS_FILENAME, safety.EVENTS_FILENAME)):
             if src.is_file():
                 _copy_private(src, target / f"{name}-{root.name}.{suffix}")
     except (safety.Refusal, OSError) as exc:
@@ -591,13 +607,14 @@ def run_column(spec: ColumnSpec, templates: Sequence[testcalls.CallTemplate], ca
         reason = abort_reason_from(events, watch_reason, exit_code, expect_done=bool(calls))
         return CellRun(spec, str(root / "sandbox"), column_url, [c.as_plan() for c in calls], events,
                        exit_code, reason, time.monotonic() - started, recorder.for_column(column_token),
-                       _tail(root / "child.log"), tuple(dropped))
+                       _tail(root / "child.log"), tuple(dropped), wire_spec(settings))
     except (Cancelled, safety.Refusal):
         raise
     except Exception as exc:
         unrun = [{"id": t.id, "call_ref": testcalls.call_ref_for(t.id), "tool": t.tool, "args": {}} for t in templates]
         return CellRun(spec, str(root / "sandbox"), column_url, unrun, [], None, f"COLUMN_ERROR:{type(exc).__name__}",
-                       time.monotonic() - started, output_tail=str(exc)[:600], copy_notes=tuple(dropped))
+                       time.monotonic() - started, output_tail=str(exc)[:600], copy_notes=tuple(dropped),
+                       wires=wire_spec(settings))
     finally:
         _cleanup_root(root, spec, settings.temp_base)
 
@@ -621,27 +638,23 @@ def sweep_stale_roots(temp_base: Path, max_age_s: float | None = None) -> list[P
     return removed
 
 
-def _drill_home_of(pid: int, temp_base: Path) -> Path | None:
-    """The PG drill HERMES_HOME named in this process's environment, or None."""
-    try:
-        out = subprocess.run(["ps", "eww", "-p", str(pid)], capture_output=True, text=True, timeout=15, check=False)
-    except (subprocess.SubprocessError, OSError):
-        return None
-    match = re.search(r"HERMES_HOME=(" + re.escape(f"{temp_base}/{safety.ROOT_PREFIX}") + r"[a-z0-9_]{8}/home)(?:\s|$)",
-                      out.stdout)
+def drill_home_in(text: str, temp_base: Path) -> Path | None:
+    """The PG drill HERMES_HOME named in this process text (command line plus environment), or None."""
+    match = re.search(r"(?:^|\s)HERMES_HOME=(" + re.escape(f"{temp_base}/{safety.ROOT_PREFIX}")
+                      + r"[a-z0-9_]{8}/home)(?=\s|$)", text)
     return Path(match.group(1)) if match else None
+
+
+def _drill_homes(temp_base: Path) -> dict[int, Path]:
+    """pid -> drill HERMES_HOME for every running drill process under temp_base, from one ps scan."""
+    return {pid: home for pid, text in _ps_env_table().items() if (home := drill_home_in(text, temp_base)) is not None}
 
 
 def reap_orphans(temp_base: Path) -> list[int]:
     """Stop drill processes whose root is already removed: a gateway daemon a killed child had just asked launchd
     for can start after that column's cleanup scan. Its root is gone, so nothing else will ever stop it."""
-    orphans = [pid for pid in _ps_candidates()
-               if (home := _drill_home_of(pid, temp_base)) is not None and not home.parent.exists()]
-    _signal_all(orphans, signal.SIGTERM)
-    deadline = time.monotonic() + KILL_GRACE_S
-    while time.monotonic() < deadline and any(safety.pid_alive(p) for p in orphans):
-        time.sleep(0.1)
-    _signal_all([p for p in orphans if safety.pid_alive(p)], signal.SIGKILL)
+    orphans = [pid for pid, home in _drill_homes(temp_base).items() if not home.parent.exists()]
+    _terminate(orphans)
     return orphans
 
 
@@ -654,8 +667,7 @@ def _ours(root: Path) -> bool:
 def leftovers(temp_base: Path) -> tuple[int, int]:
     """(this drill's processes still running, this drill's PG-marked roots still on disk) right now; the report
     records both. Another drill running at the same time in the same temp dir is not counted as ours."""
-    procs = [pid for pid in _ps_candidates()
-             if (home := _drill_home_of(pid, temp_base)) is not None and (not home.parent.exists() or _ours(home.parent))]
+    procs = [pid for pid, home in _drill_homes(temp_base).items() if not home.parent.exists() or _ours(home.parent)]
     roots = [r for r in temp_base.glob(safety.ROOT_PREFIX + "*") if safety.ROOT_NAME.match(r.name) and _ours(r)]
     return len(procs), len(roots)
 
@@ -777,7 +789,7 @@ def discover_subjects(hermes_home: Path, config: Mapping[str, Any]) -> tuple[lis
 
 
 def fixture_subjects(pg_source: Path, without: Sequence[str] = ()) -> list[PluginSource]:
-    keys = [k for k in ("fx_guard", "fx_rewriter", "fx_trimmer") if k not in set(without)]
+    keys = [k for k in safety.FIXTURE_KEYS if k not in set(without)]
     return [PluginSource(k, pg_source / "fixtures" / k) for k in keys]
 
 
@@ -859,7 +871,7 @@ def _parse_version(stdout: str) -> str:
 def _to_column(run: CellRun) -> matrix.ColumnRun:
     return matrix.column_from_events(run.spec.name, tuple(s.key for s in run.spec.plugins), run.plan_calls,
                                      run.events, run.sandbox, run.recorder_url, run.recorded,
-                                     run.abort_reason, run.wall_s)
+                                     run.abort_reason, run.wall_s, run.wires)
 
 
 def _parallel(specs: Sequence[ColumnSpec], work: Callable[[ColumnSpec], CellRun], jobs: int,
@@ -894,6 +906,10 @@ class DrillRun:
     load_order: tuple[str, ...] = ()
     unreplayable: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
     copy_notes: tuple[str, ...] = ()
+    pair_total: int | None = None  # --pairs: how many pairs the stack has (None: not asked); pair columns are in columns
+    pair_note: str = ""
+    repeats: dict[str, list[matrix.ColumnRun]] = field(default_factory=dict)  # --repeat: extra runs per solo column
+    repeat: int = 1  # --repeat N as asked
 
 
 def run_drill(subjects: Sequence[PluginSource], templates: Sequence[testcalls.CallTemplate],
@@ -923,9 +939,47 @@ def run_drill(subjects: Sequence[PluginSource], templates: Sequence[testcalls.Ca
 
         results = [_to_column(r) for r in _parallel(repeat_and_rest, work, settings.jobs, done)]
         crosscheck, refused = _run_crosscheck(results, subjects, canary, recorder, settings)
-    return DrillRun([baseline] + results[1:], results[0], crosscheck, list(skipped),
+        view = matrix.provisional([baseline] + results[1:], results[0], order)
+        pair_runs, pair_total, pair_note = _run_pairs(view, subjects, work, settings) if settings.pairs else ([], None, "")
+        repeats = _run_repeats(view, columns, work, settings) if settings.repeat > 1 else {}
+    return DrillRun([baseline] + results[1:] + pair_runs, results[0], crosscheck, list(skipped),
                     [s.key for s in subjects if s.needs_env], canary, time.monotonic() - started, order, refused,
-                    tuple(sorted(set(notes))))
+                    tuple(sorted(set(notes))), pair_total, pair_note, repeats, settings.repeat)
+
+
+def _pair_spec(a: PluginSource, b: PluginSource, runnable: Sequence[PluginSource]) -> ColumnSpec:
+    """A pair column carries both plugins plus their requires_plugins, in load order."""
+    both = {s.key: s for s in (*_solo_plugins(a, runnable), *_solo_plugins(b, runnable))}
+    return ColumnSpec(f"pair:{a.key}+{b.key}", tuple(load_order(list(both.values()))))
+
+
+def _run_pairs(view: matrix.Matrix, subjects: Sequence[PluginSource], work: Callable[[ColumnSpec], CellRun],
+               settings: RunnerSettings) -> tuple[list[matrix.ColumnRun], int, str]:
+    """--pairs: when an effect appears only in the full stack, run pairs of its plugins (at most PAIR_CAP, in load
+    order) to find the smallest set that reproduces it. Returns (pair columns, pairs that exist, report note)."""
+    runnable = [s for s in subjects if not s.needs_env]
+    every = list(itertools.combinations(runnable, 2))
+    interactions = [a for a in view.attributions if a.kind == "interaction"]
+    if not interactions:
+        return [], len(every), "no effect appears only in the full stack, so no pair columns were run"
+    if len(runnable) == 2:
+        return [], len(every), "the full stack is itself one pair, so no extra pair columns were run"
+    chosen = every[:matrix.PAIR_CAP]
+    runs = [_to_column(r) for r in _parallel([_pair_spec(a, b, runnable) for a, b in chosen], work, settings.jobs)]
+    capped = f"; capped at {matrix.PAIR_CAP} of {len(every)} pairs" if len(every) > len(chosen) else ""
+    effects = f"{len(interactions)} effect{'' if len(interactions) == 1 else 's'}"
+    return runs, len(every), f"{len(runs)} pair columns run for {effects} seen only in the full stack{capped}"
+
+
+def _run_repeats(view: matrix.Matrix, columns: Sequence[ColumnSpec], work: Callable[[ColumnSpec], CellRun],
+                 settings: RunnerSettings) -> dict[str, list[matrix.ColumnRun]]:
+    """--repeat N: the solo columns matrix.repeat_columns picks run N - 1 more times each."""
+    wanted = set(matrix.repeat_columns(view))
+    specs = [spec for spec in columns if spec.name in wanted for _ in range(settings.repeat - 1)]
+    repeats: dict[str, list[matrix.ColumnRun]] = {name: [] for name in sorted(wanted)}
+    for run in _parallel(specs, work, settings.jobs):
+        repeats[run.spec.name].append(_to_column(run))
+    return repeats
 
 
 def _run_crosscheck(results: Sequence[matrix.ColumnRun], subjects: Sequence[PluginSource], canary: str,

@@ -12,9 +12,9 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
-from .proving_ground import cli, safety
+from .proving_ground import safety
 
-HOOK_NAMES: tuple[str, ...] = (
+CALL_HOOK_NAMES: tuple[str, ...] = (
     "pre_tool_call",
     "post_tool_call",
     "transform_tool_result",
@@ -22,6 +22,9 @@ HOOK_NAMES: tuple[str, ...] = (
     "pre_approval_request",
     "post_approval_response",
 )
+# The context and reply wire, recorded only in a drill child run with --all-wires (observer.WIRE_HOOK_NAMES).
+WIRE_HOOK_NAMES: tuple[str, ...] = ("pre_llm_call", "transform_llm_output", "post_llm_call")
+HOOK_NAMES: tuple[str, ...] = CALL_HOOK_NAMES + WIRE_HOOK_NAMES
 
 
 def _inert_hook(name: str) -> Callable[..., None]:
@@ -32,17 +35,37 @@ def _inert_hook(name: str) -> Callable[..., None]:
     return inert
 
 
+def _cli() -> Any:
+    """The CLI module (report, runner, matrix, rich) loads on first use, not when Hermes loads the plugin: a chat
+    session or a drill child that never runs the command never imports it."""
+    from .proving_ground import cli
+
+    return cli
+
+
+def _setup_parser(subparser: Any) -> None:
+    _cli().setup_parser(subparser)
+
+
+def _handle_cli(args: Any) -> int:
+    return _cli().handle_cli(args)
+
+
+def _handle_slash(raw_args: str = "", *, platform: str = "", session_id: str = "", **kwargs: Any) -> str:
+    return _cli().handle_slash(raw_args, platform=platform, session_id=session_id, **kwargs)
+
+
 def _register_surfaces(ctx: Any) -> None:
     ctx.register_cli_command(
         name="provingground",
         help="Run a wiring test of your installed plugin stack in throwaway child Hermes homes",
-        setup_fn=cli.setup_parser,
-        handler_fn=cli.handle_cli,
+        setup_fn=_setup_parser,
+        handler_fn=_handle_cli,
         description="Sends known, harmless test calls through your plugins in a throwaway child Hermes.",
     )
     ctx.register_command(
         "provingground",
-        handler=cli.handle_slash,
+        handler=_handle_slash,
         description="Wiring test of your plugin stack (throwaway child home, model not called)",
         args_hint="[fixtures] [show <cell>]",
     )
@@ -53,10 +76,13 @@ def _register_drill_child(ctx: Any) -> None:
 
     state_dir = Path(os.environ["HERMES_HOME"]) / safety.STATE_DIRNAME
     plan = observer.load_plan(state_dir)
-    log = observer.EventLog(state_dir / observer.EVENTS_FILENAME)
+    log = observer.EventLog(state_dir / safety.EVENTS_FILENAME)
     hooks = observer.make_hooks(state_dir, Path(plan["sandbox"]), log)
-    for name in HOOK_NAMES:
+    for name in CALL_HOOK_NAMES:
         ctx.register_hook(name, hooks[name])
+    if plan.get("wires"):  # a default drill registers no wire hook at all, so its children are unchanged
+        for name, tap in observer.make_wire_hooks(log).items():
+            ctx.register_hook(name, tap)
     probe = getattr(ctx, "has_plugin", None)  # public PluginContext.has_plugin (plugins_context.py:57-63)
     ctx.register_middleware("llm_execution", injector.make_llm_execution(state_dir, log, probe, _load_order_probe(ctx)))
     observer.install_socket_audit(log)

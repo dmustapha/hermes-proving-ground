@@ -1,0 +1,6 @@
+# File: tests/data/fx_replier/plugin.yaml
+name: fx_replier
+version: "0.1.0"
+description: "Test-only: rewrites the final reply with transform_llm_output."
+author: dmustapha
+provides_hooks: [transform_llm_output]
