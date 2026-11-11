@@ -12,6 +12,13 @@ from typing import Any, Iterator, Mapping
 TOKEN_ENV = "PROVINGGROUND_DRILL_TOKEN"
 STATE_DIRNAME = ".provingground"
 TOKEN_FILENAME = "drill.token"
+# Files inside a child's STATE_DIRNAME, shared by the runner (writes the plan, reads events) and the child (reads the
+# plan, writes events and ABORT); one definition so the two sides cannot drift.
+PLAN_FILENAME = "plan.json"
+EVENTS_FILENAME = "events.jsonl"
+ABORT_FILENAME = "ABORT"
+SCRIPTED_MODEL = "provingground-scripted"  # the model name the child is given and the scripted replies carry
+FIXTURE_KEYS: tuple[str, ...] = ("fx_guard", "fx_rewriter", "fx_trimmer")  # the bundled demo stack
 OWNER_MARKER = ".pg-root"  # ownership marker written atomically inside every root PG creates
 PID_FILENAME = OWNER_MARKER
 ROOT_PREFIX = "provingground-"

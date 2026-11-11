@@ -27,7 +27,6 @@ from . import matrix, safety, testcalls
 
 DEAD_PROVIDER_URL = "http://127.0.0.1:9/v1"
 DEAD_PROXY = "http://127.0.0.1:9"
-SCRIPTED_MODEL = "provingground-scripted"
 DRILL_PROMPT = "run provingground wiring test"
 PG_PLUGIN_KEY = "proving-ground"
 WARM_MARKER = ".provingground-warm"
@@ -161,7 +160,7 @@ def render_child_config(plugin_keys: Sequence[str], entries: Mapping[str, Any], 
     if entries:
         lines.append(f"  entries: {json.dumps(entries, sort_keys=True)}")
     lines += ["model:", '  provider: "custom"', f"  base_url: {json.dumps(DEAD_PROVIDER_URL)}",
-              f"  default: {json.dumps(SCRIPTED_MODEL)}"]
+              f"  default: {json.dumps(safety.SCRIPTED_MODEL)}"]
     lines += ["approvals:", '  mode: "manual"', "  timeout: 5", '  cron_mode: "deny"',
               '  single_query_mode: "deny"', '  unattended_mode: "deny"',
               "terminal:", '  backend: "local"', f"  cwd: {json.dumps(str(sandbox))}"]
@@ -195,7 +194,7 @@ def child_argv(launch: Path | Sequence[str], n_calls: int) -> list[str]:
     """`launch` is the hermes executable or the resolved interpreter prefix (launch_prefix)."""
     prefix = [str(launch)] if isinstance(launch, (str, Path)) else [str(a) for a in launch]
     return [*prefix, "chat", "-q", DRILL_PROMPT, "-Q", "-t", "terminal,file",
-            "--provider", "custom", "--base-url", DEAD_PROVIDER_URL, "-m", SCRIPTED_MODEL,
+            "--provider", "custom", "--base-url", DEAD_PROVIDER_URL, "-m", safety.SCRIPTED_MODEL,
             "--max-turns", str(n_calls + 2)]
 
 
@@ -304,7 +303,7 @@ def build_child_home(root: Path, spec: ColumnSpec, settings: RunnerSettings,
     (state / safety.TOKEN_FILENAME).write_text(token, encoding="utf-8")
     plan = {"sandbox": str(root / "sandbox"), "subjects": [s.key for s in spec.plugins],
             "calls": [c.as_plan() for c in calls]}
-    (state / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (state / safety.PLAN_FILENAME).write_text(json.dumps(plan), encoding="utf-8")
     return home
 
 
@@ -316,30 +315,31 @@ def seed_sandbox(sandbox: Path, calls: Sequence[testcalls.DrillCall]) -> None:
             target.write_text(text, encoding="utf-8")
 
 # File: proving_ground/runner.py  (part 3 of 5: spawn, watch, kill, cancel)
-# env-match kill of the detached per-home daemon: `ps eww -p PID` matched on HERMES_HOME=<home>
+# env-match kill of the detached per-home daemon: the process environment matched on HERMES_HOME=<home>
 # (a probe run showed the daemon must be killed after each run); daemon command contains hermes_cli (gateway_runtime_start.py:62-63).
+# One BSD-style `ps axeww` scan lists every process with its environment appended (the dash form `-axeww` prints no
+# environment on macOS); each cleanup reads it once instead of one `ps eww -p PID` per candidate.
 # process-group timeout path and ESCAPED early kill (tests/test_cleanup.py, tests/test_escape_abort.py).
+PS_ENV_ARGV = ("ps", "axeww", "-o", "pid=,command=")
 
 
-def _ps_candidates() -> list[int]:
+def _ps_env_table() -> dict[int, str]:
+    """pid -> command line plus environment, for every hermes or python process except this one; {} when ps fails."""
     try:
-        out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True, timeout=15, check=False)
+        out = subprocess.run(list(PS_ENV_ARGV), capture_output=True, text=True, timeout=15, check=False)
     except (subprocess.SubprocessError, OSError):
-        return []
-    pids: list[int] = []
+        return {}
+    table: dict[int, str] = {}
     for line in out.stdout.splitlines():
-        pid_text, _, command = line.strip().partition(" ")
-        if pid_text.isdigit() and int(pid_text) != os.getpid() and ("hermes" in command or "python" in command):
-            pids.append(int(pid_text))
-    return pids
+        pid_text, _, text = line.strip().partition(" ")
+        if pid_text.isdigit() and int(pid_text) != os.getpid() and ("hermes" in text or "python" in text):
+            table[int(pid_text)] = text
+    return table
 
 
-def _env_contains(pid: int, needle: str) -> bool:
-    try:
-        out = subprocess.run(["ps", "eww", "-p", str(pid)], capture_output=True, text=True, timeout=15, check=False)
-    except (subprocess.SubprocessError, OSError):
-        return False
-    return needle in out.stdout
+def names_home(text: str, home: Path | str) -> bool:
+    """True when this process text carries exactly HERMES_HOME=<home> as one environment word."""
+    return re.search(r"(?:^|\s)HERMES_HOME=" + re.escape(str(home)) + r"(?=\s|$)", text) is not None
 
 
 def _signal_all(pids: Sequence[int], sig: int) -> None:
@@ -352,14 +352,18 @@ def _signal_all(pids: Sequence[int], sig: int) -> None:
 
 def kill_home_processes(home: Path) -> list[int]:
     """Terminate every process whose environment names this exact child HERMES_HOME."""
-    needle = f"HERMES_HOME={home}"
-    victims = [pid for pid in _ps_candidates() if _env_contains(pid, needle)]
-    _signal_all(victims, signal.SIGTERM)
-    deadline = time.monotonic() + KILL_GRACE_S
-    while time.monotonic() < deadline and any(safety.pid_alive(p) for p in victims):
-        time.sleep(0.1)
-    _signal_all([p for p in victims if safety.pid_alive(p)], signal.SIGKILL)
+    victims = [pid for pid, text in _ps_env_table().items() if names_home(text, home)]
+    _terminate(victims)
     return victims
+
+
+def _terminate(pids: Sequence[int]) -> None:
+    """SIGTERM, up to KILL_GRACE_S for them to exit, then SIGKILL for any still alive."""
+    _signal_all(pids, signal.SIGTERM)
+    deadline = time.monotonic() + KILL_GRACE_S
+    while time.monotonic() < deadline and any(safety.pid_alive(p) for p in pids):
+        time.sleep(0.1)
+    _signal_all([p for p in pids if safety.pid_alive(p)], signal.SIGKILL)
 
 
 def _kill_group(proc: subprocess.Popen) -> None:
@@ -438,7 +442,7 @@ def spawn_and_watch(root: Path, n_calls: int, settings: RunnerSettings, token: s
                     *, network: bool = False) -> tuple[int | None, str | None]:
     if CANCEL.is_set():
         raise Cancelled("cancelled before spawn")
-    events_path = root / "home" / safety.STATE_DIRNAME / "events.jsonl"
+    events_path = root / "home" / safety.STATE_DIRNAME / safety.EVENTS_FILENAME
     with (root / "child.log").open("wb") as log:
         proc = subprocess.Popen(child_argv(launch_prefix(settings), n_calls),
                                 env=child_env(os.environ, root, token, network=network),
@@ -497,7 +501,7 @@ def _event_from(line: str) -> dict[str, Any] | None:
 
 def read_events(home: Path, max_bytes: int = EVENTS_MAX_BYTES) -> list[dict[str, Any]]:
     """At most *max_bytes* of events.jsonl; a longer log adds a LOG_LIMIT abort instead of loading it all."""
-    path = home / safety.STATE_DIRNAME / "events.jsonl"
+    path = home / safety.STATE_DIRNAME / safety.EVENTS_FILENAME
     events: list[dict[str, Any]] = []
     try:
         with path.open("rb") as handle:
@@ -555,7 +559,7 @@ def _keep_logs(root: Path, spec: ColumnSpec, temp_base: Path) -> None:
     try:
         ensure_private_dir(target, "logs dir")
         for src, suffix in ((root / "child.log", "log"),
-                            (root / "home" / safety.STATE_DIRNAME / "events.jsonl", "events.jsonl")):
+                            (root / "home" / safety.STATE_DIRNAME / safety.EVENTS_FILENAME, safety.EVENTS_FILENAME)):
             if src.is_file():
                 _copy_private(src, target / f"{name}-{root.name}.{suffix}")
     except (safety.Refusal, OSError) as exc:
@@ -621,27 +625,23 @@ def sweep_stale_roots(temp_base: Path, max_age_s: float | None = None) -> list[P
     return removed
 
 
-def _drill_home_of(pid: int, temp_base: Path) -> Path | None:
-    """The PG drill HERMES_HOME named in this process's environment, or None."""
-    try:
-        out = subprocess.run(["ps", "eww", "-p", str(pid)], capture_output=True, text=True, timeout=15, check=False)
-    except (subprocess.SubprocessError, OSError):
-        return None
-    match = re.search(r"HERMES_HOME=(" + re.escape(f"{temp_base}/{safety.ROOT_PREFIX}") + r"[a-z0-9_]{8}/home)(?:\s|$)",
-                      out.stdout)
+def drill_home_in(text: str, temp_base: Path) -> Path | None:
+    """The PG drill HERMES_HOME named in this process text (command line plus environment), or None."""
+    match = re.search(r"(?:^|\s)HERMES_HOME=(" + re.escape(f"{temp_base}/{safety.ROOT_PREFIX}")
+                      + r"[a-z0-9_]{8}/home)(?=\s|$)", text)
     return Path(match.group(1)) if match else None
+
+
+def _drill_homes(temp_base: Path) -> dict[int, Path]:
+    """pid -> drill HERMES_HOME for every running drill process under temp_base, from one ps scan."""
+    return {pid: home for pid, text in _ps_env_table().items() if (home := drill_home_in(text, temp_base)) is not None}
 
 
 def reap_orphans(temp_base: Path) -> list[int]:
     """Stop drill processes whose root is already removed: a gateway daemon a killed child had just asked launchd
     for can start after that column's cleanup scan. Its root is gone, so nothing else will ever stop it."""
-    orphans = [pid for pid in _ps_candidates()
-               if (home := _drill_home_of(pid, temp_base)) is not None and not home.parent.exists()]
-    _signal_all(orphans, signal.SIGTERM)
-    deadline = time.monotonic() + KILL_GRACE_S
-    while time.monotonic() < deadline and any(safety.pid_alive(p) for p in orphans):
-        time.sleep(0.1)
-    _signal_all([p for p in orphans if safety.pid_alive(p)], signal.SIGKILL)
+    orphans = [pid for pid, home in _drill_homes(temp_base).items() if not home.parent.exists()]
+    _terminate(orphans)
     return orphans
 
 
@@ -654,8 +654,7 @@ def _ours(root: Path) -> bool:
 def leftovers(temp_base: Path) -> tuple[int, int]:
     """(this drill's processes still running, this drill's PG-marked roots still on disk) right now; the report
     records both. Another drill running at the same time in the same temp dir is not counted as ours."""
-    procs = [pid for pid in _ps_candidates()
-             if (home := _drill_home_of(pid, temp_base)) is not None and (not home.parent.exists() or _ours(home.parent))]
+    procs = [pid for pid, home in _drill_homes(temp_base).items() if not home.parent.exists() or _ours(home.parent)]
     roots = [r for r in temp_base.glob(safety.ROOT_PREFIX + "*") if safety.ROOT_NAME.match(r.name) and _ours(r)]
     return len(procs), len(roots)
 
@@ -777,7 +776,7 @@ def discover_subjects(hermes_home: Path, config: Mapping[str, Any]) -> tuple[lis
 
 
 def fixture_subjects(pg_source: Path, without: Sequence[str] = ()) -> list[PluginSource]:
-    keys = [k for k in ("fx_guard", "fx_rewriter", "fx_trimmer") if k not in set(without)]
+    keys = [k for k in safety.FIXTURE_KEYS if k not in set(without)]
     return [PluginSource(k, pg_source / "fixtures" / k) for k in keys]
 
 

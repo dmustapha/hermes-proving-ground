@@ -27,7 +27,6 @@ LAST_ERROR = "last-error.json"
 REPORT_MAX_BYTES = 8 * 1024 * 1024  # a saved report never exceeds this; long strings are clipped
 REPORTS_KEPT = 20  # the newest report-*.json files kept; older ones are removed on save
 CLIP_MARK = " …[clipped by PROVING GROUND: report size cap]"
-FIXTURE_KEYS = ("fx_guard", "fx_rewriter", "fx_trimmer")
 DEBUG_ENV = "PROVINGGROUND_DEBUG"  # set it to see the Python traceback instead of the one-line error
 
 
@@ -77,7 +76,7 @@ def refuse_unknown(code: str, what: str, asked: Sequence[str], known: Sequence[s
 def select_subjects(args: argparse.Namespace, settings: runner.RunnerSettings) -> tuple[list[runner.PluginSource], list[tuple[str, str]]]:
     without = list(getattr(args, "without", None) or ())
     if getattr(args, "fixtures", False):
-        refuse_unknown("UNKNOWN_PLUGIN", "plugin", without, FIXTURE_KEYS)
+        refuse_unknown("UNKNOWN_PLUGIN", "plugin", without, safety.FIXTURE_KEYS)
         return runner.fixture_subjects(settings.pg_source, without), []
     from hermes_constants import get_hermes_home
 

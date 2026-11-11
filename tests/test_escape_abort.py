@@ -27,4 +27,5 @@ def test_rewrite_outside_sandbox_is_escaped_and_stops(settings, tmp_path, tmp_pa
     assert column.observations["TC01"].escaped_reasons
     later = [cid for cid, obs in column.observations.items() if cid != "TC01"]
     assert all(not column.observations[cid].ran for cid in later)
-    assert not list(Path(settings.temp_base).glob("provingground-*/home"))
+    assert not Path(run.sandbox).parent.exists()  # this column's root is gone
+    assert not [r for r in Path(settings.temp_base).glob("provingground-*") if runner._ours(r)]  # and none of ours

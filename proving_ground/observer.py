@@ -19,7 +19,6 @@ from typing import Any, Callable, Mapping
 
 from . import safety
 
-EVENTS_FILENAME = "events.jsonl"
 PIN_BLOCK_MESSAGE = "PROVINGGROUND: the harness refused its own call (outside the sandbox)"
 TOOL_BLOCK_MESSAGE = "PROVINGGROUND: the harness refused its own call (tool not on the drill allow-list)"
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -48,12 +47,13 @@ class EventLog:
 
 
 def load_plan(state_dir: Path) -> dict[str, Any]:
-    return json.loads((state_dir / "plan.json").read_text(encoding="utf-8"))
+    return json.loads((state_dir / safety.PLAN_FILENAME).read_text(encoding="utf-8"))
 
 
-def _abort(state_dir: Path, log: EventLog, reason: str) -> None:
+def write_abort(state_dir: Path, log: EventLog, reason: str) -> None:
+    """Stop the drill: the ABORT file makes every later scripted step reply DRILL_ABORTED. Never raises."""
     try:
-        (state_dir / "ABORT").write_text(reason, encoding="utf-8")
+        (state_dir / safety.ABORT_FILENAME).write_text(reason, encoding="utf-8")
     except OSError:
         pass
     log.write("abort", reason=reason)
@@ -68,10 +68,10 @@ def make_hooks(state_dir: Path, sandbox: Path, log: EventLog) -> dict[str, Calla
         injected = _as_args(args)
         log.write("pre_tool_call", tool=tool_name, args=injected, tool_call_id=tool_call_id)
         if tool_name not in safety.ALLOWED_TOOLS:
-            _abort(state_dir, log, "TOOL_NOT_ALLOWED")
+            write_abort(state_dir, log, "TOOL_NOT_ALLOWED")
             return {"action": "block", "message": TOOL_BLOCK_MESSAGE}
         if safety.escape_reasons(injected, sandbox):
-            _abort(state_dir, log, "INJECTED_OUTSIDE_SANDBOX")
+            write_abort(state_dir, log, "INJECTED_OUTSIDE_SANDBOX")
             return {"action": "block", "message": PIN_BLOCK_MESSAGE}
         return None
 
@@ -94,7 +94,7 @@ def make_hooks(state_dir: Path, sandbox: Path, log: EventLog) -> dict[str, Calla
         reasons = safety.escape_reasons(final, sandbox)
         if reasons:
             log.write("escaped", tool_call_id=tool_call_id, reasons=reasons, args=final)
-            _abort(state_dir, log, "ESCAPED")
+            write_abort(state_dir, log, "ESCAPED")
 
     def approval_observer(hook: str) -> Callable[..., None]:
         def observe(**fields: Any) -> None:
