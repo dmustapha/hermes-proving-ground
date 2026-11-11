@@ -1,4 +1,4 @@
-# Debug P2 (perspective point b): when one plugin blocks a call in the full stack, the other plugins' solo effects on
+# When one plugin blocks a call in the full stack, the other plugins' solo effects on
 # that call are ONE grouped MASKED_IN_STACK finding under the blocking cause (one per blocker x call), not a flood.
 from __future__ import annotations
 

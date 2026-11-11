@@ -1,5 +1,5 @@
 # File: tests/helpers.py
-# [VERIFIED by the §9.1 run] synthetic events in the exact observer format of ARCHITECTURE §3.5.
+# Synthetic events in the exact format proving_ground/observer.py writes.
 from __future__ import annotations
 
 import json

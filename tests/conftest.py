@@ -1,5 +1,5 @@
 # File: tests/conftest.py
-# [VERIFIED by the §9.1 run] test scaffolding.
+# test scaffolding.
 from __future__ import annotations
 
 import importlib.util
@@ -98,7 +98,7 @@ def fake_ctx() -> FakeContext:
 @pytest.fixture(autouse=True)
 def _reports_in_tmp(tmp_path_factory: Any, monkeypatch: Any) -> None:
     """No test writes into the real Hermes home's plugin-data: reports, latest.json and last-error.json go to a
-    per-test temp dir (debug P4: the slash failure record would otherwise land in ~/.hermes/plugin-data)."""
+    per-test temp dir (the slash failure record would otherwise land in ~/.hermes/plugin-data)."""
     from proving_ground import cli
 
     directory = tmp_path_factory.mktemp("reports")

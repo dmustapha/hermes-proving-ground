@@ -1,4 +1,4 @@
-# Debug P4 L-01: PROVINGGROUND_KEEP_LOGS output gets the warm cache's checks: the logs dir is not a symlink, is ours,
+# PROVINGGROUND_KEEP_LOGS output gets the warm cache's checks: the logs dir is not a symlink, is ours,
 # is 0700; each copy is a new 0600 file that never follows or overwrites an existing name.
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-# Debug P4 M-01 and M-04: a failed slash drill is recorded, so `show` reports "last drill failed: <reason>" instead of
+# A failed slash drill is recorded, so `show` reports "last drill failed: <reason>" instead of
 # serving the previous report as current; the lock is released when the drill thread cannot start; and the slash path
 # registers atexit cleanup of its live roots and child groups (signal handlers cannot be installed off the main thread).
 from __future__ import annotations

@@ -1,7 +1,7 @@
 # File: testcalls.yaml
-# [VERIFIED] scanner verdict class for every shape below: fact-check-v2 P6 (safe list); tool argument names:
+# every shape below is in the catalog scanner's safe class (checked with `hermes plugins validate`); tool argument names:
 # tools/file_tools.py:1163-1188 (read_file path, write_file path+content), :1193-1226 (patch path, old_string, new_string).
-# [ASSUMED] TC09 loopback fetch is not itself an approval pattern; the baseline column shows it either way.
+# Assumption: TC09 loopback fetch is not itself an approval pattern; the baseline column shows it either way.
 schema: provingground.testcalls.v1
 calls:
   - id: TC01

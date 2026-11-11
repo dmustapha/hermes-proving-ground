@@ -1,5 +1,5 @@
 # File: fixtures/fx_guard/__init__.py
-# [VERIFIED] pre_tool_call block directive {"action": "block", "message": "<text>"}: pg-probe aa_guard (P2), plugins.py:1153-1159.
+# pre_tool_call block directive {"action": "block", "message": "<text>"}: hermes_cli/plugins.py:1153-1159 (observed in a probe run).
 """Demo guard: blocks any terminal command that contains the guard marker."""
 from __future__ import annotations
 

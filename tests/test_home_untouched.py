@@ -1,6 +1,6 @@
 # File: tests/test_home_untouched.py
 # I7: the measured parts of the real Hermes home (WATCHED below) are unchanged by a full drill. This is the whole
-# public claim (CL-17); logs/, plugin-data/proving-ground and other Hermes-owned files are not claimed (ARCH-F14).
+# public claim (CL-17); logs/, plugin-data/proving-ground and other Hermes-owned files are not claimed.
 from __future__ import annotations
 
 import hashlib

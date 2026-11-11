@@ -1,4 +1,4 @@
-# Debug P2 (perspective point d): PG's computed load order mirrors Hermes's layered resolver, the child reports the
+# PG's computed load order mirrors Hermes's layered resolver, the child reports the
 # order it really loaded, and a mismatch becomes a report note instead of silently drifting.
 from __future__ import annotations
 

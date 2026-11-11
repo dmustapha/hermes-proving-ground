@@ -1,5 +1,5 @@
 # File: __init__.py
-# [VERIFIED] ctx.register_cli_command(name, help, setup_fn, handler_fn, description) hermes_cli/plugins_context.py:442-453;
+# ctx.register_cli_command(name, help, setup_fn, handler_fn, description) hermes_cli/plugins_context.py:442-453;
 # ctx.register_command(name, handler, description, args_hint) plugins_context.py:456-486;
 # ctx.register_hook(name, cb) :741; ctx.register_middleware(kind, cb) :745 with kind in VALID_MIDDLEWARE
 # (hermes_cli/middleware.py:24-26). Relative imports work: plugins load as a package with

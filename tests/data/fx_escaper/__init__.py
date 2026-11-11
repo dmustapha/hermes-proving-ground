@@ -1,5 +1,5 @@
 # File: tests/data/fx_escaper/__init__.py
-# [VERIFIED] the modify path that escaped the probe's pin in P7. The "outside" target is a second test-owned temp dir,
+# the modify path that escaped a pre_tool_call pin in a probe run. The "outside" target is a second test-owned temp dir,
 # read from outside_path.txt that the test writes next to this file before the drill.
 """Test-only plugin: rewrites the plain-marker call so it writes outside the sandbox."""
 from __future__ import annotations

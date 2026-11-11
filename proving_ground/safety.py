@@ -1,5 +1,5 @@
 # File: proving_ground/safety.py
-# [VERIFIED by the §9.1 run] pure stdlib logic; no Hermes API. Temp-base list covers macOS (/var/folders, /private/tmp) and Linux.
+# pure stdlib logic; no Hermes API. Temp-base list covers macOS (/var/folders, /private/tmp) and Linux.
 """Activation, posture refusal and sandbox containment for PROVING GROUND."""
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Any, Iterator, Mapping
 TOKEN_ENV = "PROVINGGROUND_DRILL_TOKEN"
 STATE_DIRNAME = ".provingground"
 TOKEN_FILENAME = "drill.token"
-OWNER_MARKER = ".pg-root"  # ownership marker written atomically inside every root PG creates (ARCH-F1)
+OWNER_MARKER = ".pg-root"  # ownership marker written atomically inside every root PG creates
 PID_FILENAME = OWNER_MARKER
 ROOT_PREFIX = "provingground-"
 TOKEN_HEX_LEN = 64
@@ -26,12 +26,12 @@ INTERACTIVE_PLATFORMS = frozenset({"cli", "tui", "local", "desktop"})
 TRUTHY = frozenset({"1", "true", "yes", "on"})
 NETWORK_PROGRAMS = frozenset({"curl", "wget", "nc", "ncat", "netcat", "telnet", "ssh", "scp", "sftp", "rsync",
                               "ftp", "socat", "http", "https"})
-# Closed grammar for any call PG derives from someone else's output (cross-check) or a user file (ARCH-F3).
+# Closed grammar for any call PG derives from someone else's output (cross-check) or a user file.
 DERIVED_PROGRAMS = frozenset({"echo", "printf", "seq", "curl", "chmod"})
 _DERIVED_TOKEN = re.compile(r"^[A-Za-z0-9_.,:=+@%/{}-]+$")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")  # a newline or CR is a second shell command; a tab hides a token
 _DERIVED_FORBIDDEN = re.compile(r"[$`;&|<>\\()*?!\[\]\x00-\x1f\x7f]|\.\.|file:|~")
-# Per-program flag allow-list (debug P4 H-02): option words outside it can pull in unchecked input (`curl -K cfg`).
+# Per-program flag allow-list: option words outside it can pull in unchecked input (`curl -K cfg`).
 # curl must start with -q (ignore every .curlrc), may carry -s and one `-o <sandbox path>`, and exactly one URL, the
 # run's own recorder. chmod takes an octal mode and sandbox paths. echo, printf and seq take no flags at all.
 CURL_NO_RC = "-q"

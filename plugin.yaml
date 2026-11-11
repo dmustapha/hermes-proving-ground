@@ -1,14 +1,14 @@
 # File: plugin.yaml
-# [VERIFIED] field names: hermes_cli/plugins_manifest.py:32-39 (known fields), provides_middleware read by
-# hermes_cli/plugin_validate.py:438 and accepted in the probe manifest (pg-probe/plugins/zz_pg/plugin.yaml, v6.txt
-# "declared middleware — matches registrations"); requires_hermes gate plugins_manifest.py:457-510.
+# field names: hermes_cli/plugins_manifest.py:32-39 (known fields), provides_middleware read by
+# hermes_cli/plugin_validate.py:438 and accepted by `hermes plugins validate`
+# ("declared middleware — matches registrations"); requires_hermes gate plugins_manifest.py:457-510.
 name: proving-ground
 version: "0.1.0"
 description: "A wiring test for your plugin stack: sends known, harmless test calls through every installed plugin in a throwaway child Hermes home (model never called) and shows what each plugin blocked, rewrote, changed or let through."
 author: dmustapha
 license: MIT
 homepage: https://github.com/dmustapha/hermes-proving-ground
-requires_hermes: ">=0.23.1"  # the only verified version (PRD-F13); widen after a recorded run
+requires_hermes: ">=0.23.1"  # the only version with a recorded drill; widen after a recorded run on another
 platforms: [macos]  # Linux untested until a recorded Linux drill exists (LIMITATIONS)
 provides_hooks:
   - pre_tool_call

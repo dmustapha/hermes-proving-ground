@@ -1,6 +1,6 @@
 # File: fixtures/fx_rewriter/__init__.py
-# [VERIFIED] modify directive {"action": "modify", "args": {"command": "<new>"}} merged after every pre_tool_call ran:
-# pg-probe aa_guard MODME (P2), plugins.py:1143-1150.
+# modify directive {"action": "modify", "args": {"command": "<new>"}} merged after every pre_tool_call ran:
+# hermes_cli/plugins.py:1143-1150 (observed in a probe run).
 """Demo rewriter: turns the candidate marker into the guard marker, after other checks already saw the original."""
 from __future__ import annotations
 

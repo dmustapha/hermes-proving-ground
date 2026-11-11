@@ -1,7 +1,7 @@
 # File: proving_ground/injector.py
-# [VERIFIED] ChatCompletion.model_validate body shape, step counting and final reply: pg-probe/plugins/zz_pg/__init__.py
-# (llm) ran end-to-end in P1 ("PG-DONE", 4 scripted steps, 5 llm_execution calls). request["messages"] is a list of dicts (P1 log).
-# [VERIFIED by the §9.1 run] ABORT-file handling and the guarded error path (tests/test_injector.py).
+# ChatCompletion.model_validate body shape, step counting and final reply: a ChatCompletion
+# built with model_validate ran end to end in a probe child (4 scripted steps, 5 llm_execution calls); request["messages"] is a list of dicts.
+# ABORT-file handling and the guarded error path (tests/test_injector.py).
 """Scripted llm_execution middleware. Registered only inside a drill child (safety.is_drill_child)."""
 from __future__ import annotations
 

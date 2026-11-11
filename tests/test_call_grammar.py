@@ -1,7 +1,7 @@
-# Debug P4 H-01 and H-02: the derived-call grammar is closed. No control character in any string argument (a newline
+# The derived-call grammar is closed. No control character in any string argument (a newline
 # is a second shell command), single-space tokens only, and a per-program flag allow-list so no option can pull in
-# unchecked input (`curl -K <sandbox file>` reads proxy and URL settings that reach any host). The phase-4 PoC strings
-# are listed verbatim, and the PoC --calls file is refused end to end.
+# unchecked input (`curl -K <sandbox file>` reads proxy and URL settings that reach any host). The review's proof-of-concept
+# strings are listed verbatim, and its --calls file is refused end to end.
 from __future__ import annotations
 
 import shutil

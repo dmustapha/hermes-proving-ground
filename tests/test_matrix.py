@@ -1,5 +1,5 @@
 # File: tests/test_matrix.py
-# Pure classification + attribution against the expected fixture matrix (ARCHITECTURE §3.10).
+# Pure classification + attribution against the expected fixture matrix.
 from __future__ import annotations
 
 from helpers import fixture_like_matrix
@@ -24,7 +24,7 @@ def test_fixture_like_outcomes() -> None:
 def test_core_truncation_is_never_blamed() -> None:
     m = fixture_like_matrix()
     assert m.cell("baseline", "TC05").core
-    # debug P2 (TC05): the stack shows the same core label as the baseline, and core is still never blamed
+    # TC05: the stack shows the same core label as the baseline, and core is still never blamed
     assert primary(m, "stack", "TC05") is Outcome.RESULT_CHANGED and m.cell("stack", "TC05").core
 
 

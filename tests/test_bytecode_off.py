@@ -1,4 +1,4 @@
-# Debug P2 (perspective point 5, DEV-021): children run Hermes's own interpreter command with -B added, so a drill
+# Children run Hermes's own interpreter command with -B added, so a drill
 # writes no bytecode into the Hermes tree; the launcher's -I isolation is kept.
 from __future__ import annotations
 

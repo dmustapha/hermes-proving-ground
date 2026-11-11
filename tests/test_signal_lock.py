@@ -1,4 +1,4 @@
-# Debug P4 M-02: SIGINT/SIGTERM delivered while the main thread holds _LIVE_LOCK must not deadlock the handler
+# SIGINT/SIGTERM delivered while the main thread holds _LIVE_LOCK must not deadlock the handler
 # (cancel_everything takes the same lock). Run in a subprocess with a hard timeout: a deadlock is a timeout, not a hang.
 from __future__ import annotations
 

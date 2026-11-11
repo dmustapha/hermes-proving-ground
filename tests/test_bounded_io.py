@@ -1,4 +1,4 @@
-# Debug P4 M-03: bounded reads and writes. The output tail reads from the end, events are read up to a cap (a longer
+# Bounded reads and writes. The output tail reads from the end, events are read up to a cap (a longer
 # log becomes a LOG_LIMIT abort), the escape scan reads only new bytes, an oversized child log stops the column, and the
 # saved report is clipped to a size cap with only the newest reports kept.
 from __future__ import annotations

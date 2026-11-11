@@ -1,5 +1,5 @@
 # File: fixtures/fx_guard/plugin.yaml
-# [VERIFIED] manifest shape: pg-probe/plugins/aa_guard/plugin.yaml (loaded in P1/P2/P5).
+# A minimal directory-plugin manifest (hermes_cli/plugins_manifest.py:32-39); loaded by Hermes v0.23.1 in every drill.
 name: fx_guard
 version: "0.1.0"
 description: "PROVING GROUND demo fixture: a guard that blocks terminal commands carrying PG_GUARD_MARKER."

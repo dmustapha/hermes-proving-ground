@@ -1,4 +1,4 @@
-# Debug P2 (perspective point 4): events attach to drill calls by tool_call_id only. An event whose id matches no
+# Events attach to drill calls by tool_call_id only. An event whose id matches no
 # drill call is an explicit harness error for its column, never matched to a call by order.
 from __future__ import annotations
 

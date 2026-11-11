@@ -1,6 +1,6 @@
 # File: tests/test_child_spawn.py
 # I4b: the child env, argv and config force approvals on and carry no provider keys; plugin copies withhold
-# credential-shaped files, secret-shaped settings and symlinks that leave the plugin dir (ARCH-F11); the warm cache is ours.
+# credential-shaped files, secret-shaped settings and symlinks that leave the plugin dir; the warm cache is ours.
 from __future__ import annotations
 
 from pathlib import Path

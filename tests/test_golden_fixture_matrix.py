@@ -1,6 +1,6 @@
-# Debug P2 (perspective point 2): the full-matrix golden snapshot of the real scripted fixture drill. Every
+# The full-matrix golden snapshot of the real scripted fixture drill. Every
 # (column, call) primary outcome is pinned, so a false positive anywhere (say fx_guard x TC03 turning RESULT CHANGED)
-# fails loudly. One drill also proves points 5 and d: every child ran with bytecode off and loaded the stack in PG's
+# fails loudly. One drill also proves that every child ran with bytecode off and loaded the stack in PG's
 # computed order.
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ SNAPSHOT = {"TC01": (P, P, P, P, P),
             "TC02": (P, B, P, P, B),
             "TC03": (P, P, W, P, W),
             "TC04": (P, P, P, R, R),
-            "TC05": (R, R, R, R, R),  # core truncation, labelled (core) in every column since debug P2
+            "TC05": (R, R, R, R, R),  # core truncation, labelled (core) in every column
             "TC06": (P, P, P, P, P),
             "TC07": (P, P, P, P, P),
             "TC08": (P, P, P, P, P),
