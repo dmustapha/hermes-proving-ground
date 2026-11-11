@@ -24,9 +24,9 @@ calls:
   - id: U03
     tool: terminal
     subject: a real trigger shape, printed
-    purpose: "Prints a force-push command as text (echo runs nothing). A guard that matches on --force sees this shape; the demo guard does not."
+    purpose: "Prints a force-push command as text (echo runs nothing). A guard that matches on --force sees this shape; the demo guard does not. Hermes's own approval check matches the text too, so without a block it is APPROVAL-GATED (core)."
     args: {command: "echo git push --force origin main {CALL_ID}"}
-    expect: {"solo:fx_guard": PASSED_THROUGH}  # for your own guard, expect BLOCKED here
+    expect: {baseline: APPROVAL_GATED, "solo:fx_guard": APPROVAL_GATED}  # for your own guard, expect BLOCKED here
 expect:
   TC01: {"solo:fx_guard": PASSED_THROUGH}
   TC02: {"solo:fx_guard": BLOCKED}
