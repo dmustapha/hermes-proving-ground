@@ -82,3 +82,65 @@ def test_warm_failure_names_the_reason() -> None:
     refusal = runner.warm_failure(_failed_run(None))  # type: ignore[arg-type]
     assert isinstance(refusal, safety.Refusal) and refusal.code == "WARMUP_FAILED"
     assert "CELL_TIMEOUT" in refusal.message and "hermes provingground warm" in refusal.message
+
+
+def _warm_after(monkeypatch, copied: list) -> None:
+    """is_warm turns true once seed_cache ran (a stand-in for the real copy, which tests/test_seed.py covers)."""
+    monkeypatch.setattr(runner, "is_warm", lambda _s: bool(copied))
+
+
+def test_a_cold_cache_warms_from_the_local_hermes_installs_without_downloading(monkeypatch, capsys, tmp_path):
+    _interactive(monkeypatch)
+    copied: list = []
+    _warm_after(monkeypatch, copied)
+    monkeypatch.setattr(cli, "local_installs", lambda: tmp_path / "installs")
+    monkeypatch.setattr(seed_module(), "seed_cache", lambda settings, source: copied.append(source))
+    monkeypatch.setattr(runner, "warm_up", _no_spawn)
+    cli.ensure_warm(cli.build_settings(argparse.Namespace()))
+    err = capsys.readouterr().err.splitlines()
+    assert copied == [tmp_path / "installs"]
+    assert len(err) == 1 and err[0].startswith(f"warm-up: copying Hermes's runtime from {tmp_path / 'installs'}")
+    assert "no network" in err[0]
+
+
+def test_a_refused_local_copy_falls_back_to_the_download(monkeypatch, capsys, tmp_path):
+    _interactive(monkeypatch)
+    monkeypatch.setattr(runner, "is_warm", lambda _s: False)
+    monkeypatch.setattr(cli, "local_installs", lambda: tmp_path / "installs")
+
+    def refused(_settings, _source):
+        raise safety.Refusal("SEED_UNSUPPORTED", "this runtime cannot be moved")
+
+    monkeypatch.setattr(seed_module(), "seed_cache", refused)
+    monkeypatch.setattr(runner, "warm_up", _failed_run)
+    with pytest.raises(safety.Refusal) as failed:
+        cli.ensure_warm(cli.build_settings(argparse.Namespace()))
+    err = capsys.readouterr().err
+    assert failed.value.code == "WARMUP_FAILED"
+    assert "the local copy was not used (SEED_UNSUPPORTED: this runtime cannot be moved)" in err
+    assert "650 MB" in err  # the download notice follows
+
+
+def test_without_download_permission_a_cold_cache_is_refused_not_downloaded(monkeypatch):
+    _interactive(monkeypatch)
+    monkeypatch.setattr(runner, "is_warm", lambda _s: False)
+    monkeypatch.setattr(runner, "warm_up", _no_spawn)
+    with pytest.raises(safety.Refusal) as refused:
+        cli.ensure_warm(cli.build_settings(argparse.Namespace()), allow_download=False)
+    assert refused.value.code == "WARM_UP_NEEDED"
+
+
+@pytest.mark.parametrize("flag", ["status", "check"])
+def test_warm_status_is_the_name_and_check_its_old_alias(monkeypatch, capsys, flag):
+    _interactive(monkeypatch)
+    monkeypatch.setattr(runner, "is_warm", lambda _s: False)
+    monkeypatch.setattr(runner, "warm_up", _no_spawn)
+    assert cli.handle_cli(argparse.Namespace(action="warm", **{flag: True})) == 3
+    assert capsys.readouterr().out.startswith("COLD: runtime cache")
+    assert cli.handle_cli(argparse.Namespace(action="run", status=True)) == 2
+
+
+def seed_module():
+    from proving_ground import seed
+
+    return seed

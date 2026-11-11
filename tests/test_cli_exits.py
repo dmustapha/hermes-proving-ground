@@ -134,7 +134,31 @@ def test_help_documents_every_action_and_exit_code() -> None:
     parser = argparse.ArgumentParser(prog="hermes provingground")
     cli.setup_parser(parser)
     text = parser.format_help()
-    for word in ("run ", "show ", "warm ", "sweep ", "warm --check", "130", "--column"):
+    for word in ("run ", "show ", "lock ", "warm ", "sweep ", "warm --status", "130", "--column"):
         assert word in text, word
     for code in ("0 ", "1 ", "2 ", "3 ", "4 ", "5 "):
         assert f"\n  {code}" in text, code
+
+
+def test_short_help_groups_options_and_hides_the_advanced_knobs() -> None:
+    parser = argparse.ArgumentParser(prog="hermes provingground")
+    cli.setup_parser(parser)
+    text = parser.format_help()
+    for group in ("\nrun:\n", "\nreport:\n", "\ncompare:\n", "\nadvanced:\n"):
+        assert group in text, group
+    for hidden in ("--jobs", "--timeout", "--hermes-bin", "--quiet", "--no-color"):
+        assert f"  {hidden}" not in text.split("actions:")[0], hidden  # named once in the epilog instead
+    args = parser.parse_args(["--jobs", "2", "--timeout", "9", "--quiet", "--no-color", "--hermes-bin", "/x"])
+    assert (args.jobs, args.timeout, args.quiet, args.no_color, args.hermes_bin) == (2, 9.0, True, True, "/x")
+    assert "BLOCKED · REWROTE · RESULT CHANGED · APPROVAL-GATED · PASSED THROUGH" in text
+    assert "more: ESCAPED, ERRORED, LOAD FAILED, NOT RUN, N/A" in text
+
+
+def test_lock_runs_the_drill_and_writes_the_contract(monkeypatch, tmp_path) -> None:
+    seen = []
+    monkeypatch.setattr(cli, "cmd_run", lambda args: seen.append(args.write_contract) or 0)
+    parser = argparse.ArgumentParser()
+    cli.setup_parser(parser)
+    assert cli.handle_cli(parser.parse_args(["lock", str(tmp_path / "stack.lock.yaml"), "--fixtures"])) == 0
+    assert seen == [str(tmp_path / "stack.lock.yaml")]
+    assert cli.handle_cli(parser.parse_args(["lock"])) == 2 and seen == [str(tmp_path / "stack.lock.yaml")]

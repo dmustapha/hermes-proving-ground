@@ -67,6 +67,36 @@ def cell_label(cell: mx.Cell) -> str:
     return label + core + (" UNSTABLE" if cell.varied else " ~" if cell.unstable else "")
 
 
+def _mark_for(f: mx.Finding) -> tuple[str, str] | None:
+    """(phrase, plugin) for the stack cell a cross-plugin finding is about; an ESCAPED cell already says so."""
+    if f.kind == "REWRITE_UNSEEN_BY" and f.plugins:
+        return "unseen by", f.plugins[-1]
+    if f.kind == "MASKED_IN_STACK":
+        return "masks", f.plugins[0] if len(f.plugins) == 1 else "a solo effect"
+    if f.kind == "STACK_ONLY_INTERACTION":
+        return "only in combination", ""
+    return None
+
+
+def finding_marks(m: mx.Matrix) -> dict[tuple[str, str], str]:
+    """The in-cell marker of every stack cell that carries a finding, e.g. "unseen by fx_guard"."""
+    grouped: dict[tuple[str, str], dict[str, list[str]]] = {}
+    for f in m.findings:
+        mark = _mark_for(f)
+        if mark is None or ("stack", f.call_id) not in m.cells:
+            continue
+        names = grouped.setdefault(("stack", f.call_id), {}).setdefault(mark[0], [])
+        names += [mark[1]] if mark[1] and mark[1] not in names else []
+    return {key: " · ".join(f"{phrase} {', '.join(names)}".strip() for phrase, names in marks.items())
+            for key, marks in grouped.items()}
+
+
+def marked_label(cell: mx.Cell, marks: Mapping[tuple[str, str], str]) -> str:
+    """A matrix cell as the views print it: the outcome, then the finding it carries ("REWROTE · unseen by X")."""
+    mark = marks.get((cell.column, cell.call_id))
+    return cell_label(cell) + (f" · {mark}" if mark else "")
+
+
 def _plugin_title(name: str) -> str:
     """A solo column is titled by its plugin, a pair column (pair:a+b) as "a + b"."""
     if name.startswith("pair:"):
@@ -251,14 +281,18 @@ def conditions_lines(m: mx.Matrix) -> list[str]:
 
 def _rich_table(calls: Sequence[mx.CallInfo], columns: Sequence[str],
                 cells: Mapping[tuple[str, str], mx.Cell], call_width: int | None = None,
-                observed: int | None = None, titles: Mapping[str, str] | None = None) -> Any:
+                observed: int | None = None, titles: Mapping[str, str] | None = None,
+                marks: Mapping[tuple[str, str], str] | None = None) -> Any:
     """Outcome labels wrap only at their "(core)" suffix; the call column wraps (to call_width) on narrow terminals.
-    *observed* is the drill's call count when --focus prints fewer rows than the drill ran."""
+    *observed* is the drill's call count when --focus prints fewer rows than the drill ran. With *marks* (the final
+    report) the headline is printed above the findings instead, so the table has no title of its own."""
     from rich import box
+    from rich.markup import escape
     from rich.table import Table
 
     n = mx.count_test_calls(calls) if observed is None else observed
-    table = Table(title=f"{HEADLINE}\n{OBSERVED.format(n=n)}", box=box.SIMPLE_HEAD, expand=False,
+    title = None if marks is not None else f"{HEADLINE}\n{OBSERVED.format(n=n)}"
+    table = Table(title=title, box=box.SIMPLE_HEAD, expand=False,
                   title_style="bold", header_style="bold", pad_edge=False)
     table.add_column("test call", no_wrap=call_width is None, width=call_width)
     for name in columns:
@@ -267,7 +301,9 @@ def _rich_table(calls: Sequence[mx.CallInfo], columns: Sequence[str],
         row = [f"[bold]{call.id}[/] {call.subject}"]
         for name in columns:
             cell = cells.get((name, call.id))
-            row.append(f"[{STYLE[cell.primary]}]{cell_label(cell)}[/]" if cell else "[dim]…[/]")
+            mark = (marks or {}).get((name, call.id))
+            text = f"[{STYLE[cell.primary]}]{cell_label(cell)}[/]" if cell else "[dim]…[/]"
+            row.append(text + (f" [bold]· {escape(mark)}[/]" if mark else ""))
         table.add_row(*row)
     return table
 
@@ -288,12 +324,12 @@ def display_order(columns: Sequence[str], width: int, titles: Mapping[str, str] 
 
 def _print_table(console: Any, calls: Sequence[mx.CallInfo], columns: Sequence[str],
                  cells: Mapping[tuple[str, str], mx.Cell], observed: int | None = None,
-                 titles: Mapping[str, str] | None = None) -> None:
+                 titles: Mapping[str, str] | None = None, marks: Mapping[tuple[str, str], str] | None = None) -> None:
     columns = display_order(columns, console.width, titles)
     longest_call = max([len("test call")] + [len(f"{c.id} {c.subject}") for c in calls])
     budget = console.width - _outcome_columns_width(columns, titles)
     call_width = None if longest_call <= budget else max(8, budget)
-    console.print(_rich_table(calls, columns, cells, call_width, observed, titles))
+    console.print(_rich_table(calls, columns, cells, call_width, observed, titles, marks))
 
 
 def shown_calls(m: mx.Matrix, focus: bool) -> tuple[mx.CallInfo, ...]:
@@ -311,15 +347,15 @@ def focus_line(m: mx.Matrix) -> str:
 
 
 def _plain_table(m: mx.Matrix, color: bool, calls: Sequence[mx.CallInfo] | None = None) -> str:
-    titles = header_titles(m)
+    titles, marks = header_titles(m), finding_marks(m)
     width = max(14, *(len(titles[n]) for n in m.columns)) + 2
     head = "test call".ljust(34) + "".join(titles[n].ljust(width) for n in m.columns)
-    lines = [HEADLINE, OBSERVED.format(n=m.conditions.n_calls), head, "-" * len(head)]
+    lines = [head, "-" * len(head)]
     for call in m.calls if calls is None else calls:
         row = f"{call.id} {call.subject}"[:33].ljust(34)
         for name in m.columns:
             cell = m.cells.get((name, call.id))
-            text = (cell_label(cell) if cell else "pending").ljust(width)
+            text = (marked_label(cell, marks) if cell else "pending").ljust(width)
             row += f"{ANSI[STYLE[cell.primary]]}{text}{RESET}" if (cell and color) else text
         lines.append(row)
     return "\n".join(lines)
@@ -331,13 +367,22 @@ def _plain_lead(m: mx.Matrix, f: mx.Finding) -> list[str]:
         return []
     tool = next((c.tool for c in m.calls if c.id == f.call_id), "")
     noun = "command" if tool == "terminal" else "call"
-    return [f"• In plain words: {f.plugins[-1]} approved a {noun} it never saw, and that {noun} ran."]
+    return [f"• In plain words: {f.plugins[-1]} checked the original {noun} and never saw the rewritten one, "
+            f"and the rewritten {noun} ran."]
 
 
-def _footer_lines(m: mx.Matrix) -> list[str]:
-    lines = [mx.tally(m)]
-    lines += [line for f in m.findings for line in (*_plain_lead(m, f), f"• {f.kind}: {f.text}")]
-    lines += [f"• attribution {a.call_id} {mx.LABELS[a.outcome]}: {a.kind} — {a.note}" for a in m.attributions]
+NO_FINDING = "• no cross-plugin finding recorded on these test calls"
+
+
+def finding_lines(m: mx.Matrix) -> list[str]:
+    """What the report leads with: each cross-plugin finding, the plain-words harm first."""
+    lines = [line for f in m.findings for line in (*_plain_lead(m, f), f"• {f.kind}: {f.text}")]
+    return lines or [NO_FINDING]
+
+
+def _note_lines(m: mx.Matrix) -> list[str]:
+    """Under the matrix: who each stack effect is attributed to, and everything that qualifies a cell."""
+    lines = [f"• attribution {a.call_id} {mx.LABELS[a.outcome]}: {a.kind} — {a.note}" for a in m.attributions]
     lines += [f"• skipped {key}: {why}" for key, why in m.skipped]
     lines += [f"• column {col} stopped: DRILL_ABORTED ({why})" for col, why in m.aborted.items()]
     lines += [f"• LOAD FAILED in {col}: {', '.join(keys)} not confirmed loaded; its cells are not results"
@@ -348,23 +393,37 @@ def _footer_lines(m: mx.Matrix) -> list[str]:
               for c in m.cells.values() if c.varied]
     if m.unstable:
         lines.append(f"• unstable between two baseline runs (never reported as RESULT CHANGED): {', '.join(sorted(m.unstable))}")
-    return lines + [SCOPE_NOTE, "Detail: hermes provingground show <CALL> --column <COLUMN>"]
+    return lines
+
+
+DETAIL_HINT = "Detail: hermes provingground show <CALL> --column <COLUMN>"
+
+
+def _head_lines(m: mx.Matrix) -> list[str]:
+    return [HEADLINE, OBSERVED.format(n=m.conditions.n_calls), mx.tally(m)]
 
 
 def render_terminal(m: mx.Matrix, color: bool = True, width: int = 160, focus: bool = False) -> str:
     """The whole matrix; with *focus*, only the rows with an effect, then one line naming the rows left out."""
     calls, focused = shown_calls(m, focus), [focus_line(m)] if focus else []
+    head, notes = _head_lines(m) + finding_lines(m), [*focused, *_note_lines(m), SCOPE_NOTE]
     try:
         from rich.console import Console
         from rich.panel import Panel
     except ImportError:
-        return "\n".join(conditions_lines(m) + ["", _plain_table(m, color, calls), *focused, ""] + _footer_lines(m))
+        return "\n".join([*head, "", _plain_table(m, color, calls), *notes, "", "drill conditions:",
+                          *conditions_lines(m), DETAIL_HINT])
     buffer = io.StringIO()
     console = Console(file=buffer, force_terminal=color, no_color=not color, width=width)
-    console.print(Panel("\n".join(conditions_lines(m)), title="drill conditions", expand=False))
-    _print_table(console, calls, m.columns, m.cells, m.conditions.n_calls if focus else None, header_titles(m))
-    for line in focused + _footer_lines(m):
+    console.print(head[0], style="bold", markup=False, highlight=False)
+    for line in head[1:]:
         console.print(line, markup=False, highlight=False)
+    _print_table(console, calls, m.columns, m.cells, m.conditions.n_calls if focus else None, header_titles(m),
+                 finding_marks(m))
+    for line in notes:
+        console.print(line, markup=False, highlight=False)
+    console.print(Panel("\n".join(conditions_lines(m)), title="drill conditions", expand=False))
+    console.print(DETAIL_HINT, markup=False, highlight=False)
     return buffer.getvalue()
 
 
@@ -410,15 +469,19 @@ def _md_escape(text: str) -> str:
 
 
 def render_markdown(m: mx.Matrix, focus: bool = False) -> str:
+    marks = finding_marks(m)
     lines = [f"# {HEADLINE}", "", f"**{OBSERVED.format(n=m.conditions.n_calls)}** {mx.tally(m)}", "",
-             "## Drill conditions", *[f"- {line}" for line in conditions_lines(m)], "", "## Matrix", "",
+             "## Findings", *[f"- {_md_escape(x.lstrip('• '))}" for x in finding_lines(m)], "", "## Matrix", "",
              "| test call | " + " | ".join(header_title(m, n) for n in m.columns) + " |",
              "|---|" + "---|" * len(m.columns)]
     for call in shown_calls(m, focus):
-        cells = [cell_label(m.cells[(n, call.id)]) if (n, call.id) in m.cells else "pending" for n in m.columns]
+        cells = [_md_escape(marked_label(m.cells[(n, call.id)], marks)) if (n, call.id) in m.cells else "pending"
+                 for n in m.columns]
         lines.append(f"| {call.id} {_md_escape(call.subject)} | " + " | ".join(cells) + " |")
     lines += ["", focus_line(m)] if focus else []
-    lines += ["", "## Findings and attribution", *[f"- {_md_escape(x.lstrip('• '))}" for x in _footer_lines(m)]]
+    lines += ["", "## Attribution and notes", *[f"- {_md_escape(x.lstrip('• '))}" for x in _note_lines(m)],
+              f"- {SCOPE_NOTE}", f"- {DETAIL_HINT}",
+              "", "## Drill conditions", *[f"- {line}" for line in conditions_lines(m)]]
     return "\n".join(lines) + "\n"
 
 
@@ -573,7 +636,9 @@ h1{font-size:clamp(19px,4.8vw,26px);line-height:1.25;letter-spacing:-.01em;margi
 h3{font-size:13px;font-weight:600;color:var(--muted);margin:18px 0 6px}.panel h3:first-child{margin-top:0}
 .box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:16px 0}
 .box ul{margin:8px 0 0;padding-left:18px}.box li{margin:3px 0;overflow-wrap:anywhere}
-main>div:first-of-type{font-size:13.5px}.scroll{overflow-x:auto;padding:6px 8px}
+.small{font-size:13.5px}.scroll{overflow-x:auto;padding:6px 8px}details.box summary{cursor:pointer;font-weight:600}
+.mark{display:block;margin-top:4px;font:600 11.5px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--escaped)}
+.lead{font-size:16px;font-weight:600}
 table{border-collapse:separate;border-spacing:0;width:100%}th,td{border-bottom:1px solid var(--line);padding:9px 10px;
 text-align:left;white-space:nowrap;vertical-align:top}tbody tr:last-child>*{border-bottom:0}
 thead th{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
@@ -607,14 +672,16 @@ def _anchor(column: str, call_id: str) -> str:
     return "cell-" + re.sub(r"[^A-Za-z0-9_-]", "-", f"{column}-{call_id}")
 
 
-def _html_cell(m: mx.Matrix, column: str, call_id: str) -> str:
+def _html_cell(m: mx.Matrix, column: str, call_id: str, marks: Mapping[tuple[str, str], str]) -> str:
     cell = m.cells.get((column, call_id))
     if cell is None:
         return "<td>pending</td>"
+    mark = marks.get((column, call_id))
+    flag = f"<span class='mark'>· {html.escape(mark)}</span>" if mark else ""
     if column not in m.observations or call_id not in m.observations[column]:  # N/A: no detail panel to link
-        return f'<td><span class="{cell.primary.value}">{html.escape(cell_label(cell))}</span></td>'
+        return f'<td><span class="{cell.primary.value}">{html.escape(cell_label(cell))}</span>{flag}</td>'
     return (f'<td><a class="{cell.primary.value}" href="#{_anchor(column, call_id)}">'
-            f"{html.escape(cell_label(cell))}</a></td>")
+            f"{html.escape(cell_label(cell))}</a>{flag}</td>")
 
 
 def _html_lines(lines: list[str]) -> str:
@@ -650,19 +717,22 @@ def _html_header(m: mx.Matrix, name: str) -> str:
 
 
 def render_html(m: mx.Matrix, focus: bool = False) -> str:
-    head = "".join(_html_header(m, n) for n in m.columns)
+    head, marks = "".join(_html_header(m, n) for n in m.columns), finding_marks(m)
     rows = "".join(f"<tr{' class=quiet' if mx.quiet_row(m, c.id) else ''}><th>{html.escape(c.id)} "
                    f"<span class='muted'>{html.escape(c.subject)}</span></th>"
-                   + "".join(_html_cell(m, n, c.id) for n in m.columns) + "</tr>" for c in m.calls)
+                   + "".join(_html_cell(m, n, c.id, marks) for n in m.columns) + "</tr>" for c in m.calls)
     panels = "".join(_html_panel(m, col, cid) for (col, cid) in m.cells
                      if col in m.observations and cid in m.observations[col])
-    footer = "".join(f"<li>{html.escape(x.lstrip('• '))}</li>" for x in _footer_lines(m) if x != SCOPE_NOTE)
+    findings = "".join(f"<li{' class=lead' if x.startswith('• In plain words') else ''}>"
+                       f"{html.escape(x.lstrip('• '))}</li>" for x in finding_lines(m))
+    notes = "".join(f"<li>{html.escape(x.lstrip('• '))}</li>" for x in _note_lines(m))
     cond = "".join(f"<li>{html.escape(x)}</li>" for x in conditions_lines(m))
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>Proving Ground Report</title>'
             f"<style>{CSS}</style></head><body><main><h1>{html.escape(HEADLINE)}</h1>"
             f"<p class='muted'>{html.escape(OBSERVED.format(n=m.conditions.n_calls))} {html.escape(mx.tally(m))}</p>"
-            f"<div class='box'><strong>Drill conditions</strong><ul>{cond}</ul></div>{_html_focus_toggle(m, focus)}"
+            f"<div class='box'><strong>Findings</strong><ul>{findings}</ul></div>{_html_focus_toggle(m, focus)}"
             f"<div class='box scroll' id='matrix'><table><thead><tr><th>test call</th>{head}</tr></thead>"
-            f"<tbody>{rows}</tbody></table></div><div class='box'><ul>{footer}</ul></div>{panels}"
+            f"<tbody>{rows}</tbody></table></div><div class='box small'><ul>{notes}</ul></div>"
+            f"<details class='box small'><summary>Drill conditions</summary><ul>{cond}</ul></details>{panels}"
             f"<p class='muted'>{html.escape(SCOPE_NOTE)}</p></main></body></html>")

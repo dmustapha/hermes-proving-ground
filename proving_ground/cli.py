@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import contextvars
 import datetime as dt
 import json
 import os
@@ -114,10 +115,19 @@ def refuse_unknown(code: str, what: str, asked: Sequence[str], known: Sequence[s
         raise safety.Refusal(code, f"unknown {what} {', '.join(unknown)}; choose from {', '.join(sorted(known))}.")
 
 
+def fixture_stack(args: argparse.Namespace) -> str | None:
+    """The bundled stack a drill uses: "demo" (--fixtures), "extended" (--extended, with or without --fixtures; the
+    slash command passes fixtures="extended"), or None for the plugins enabled in your Hermes home."""
+    fixtures = getattr(args, "fixtures", None)
+    if getattr(args, "extended", False) or fixtures == "extended":
+        return "extended"
+    return "demo" if fixtures else None
+
+
 def select_subjects(args: argparse.Namespace, settings: runner.RunnerSettings) -> tuple[list[runner.PluginSource], list[tuple[str, str]]]:
     without = list(getattr(args, "without", None) or ())
-    if getattr(args, "fixtures", False):
-        extended = getattr(args, "fixtures", None) == "extended"
+    if fixture_stack(args):
+        extended = fixture_stack(args) == "extended"
         known = runner.fixture_subjects(settings.pg_source, extended=extended)
         refuse_unknown("UNKNOWN_PLUGIN", "plugin", without, [s.key for s in known])
         return runner.fixture_subjects(settings.pg_source, without, extended=extended), []
@@ -148,11 +158,50 @@ def select_templates(args: argparse.Namespace) -> list[testcalls.CallTemplate]:
     return [t for t in templates if not only or t.id in set(only)]
 
 
-def ensure_warm(settings: runner.RunnerSettings) -> None:
-    """Warm the runtime cache once, announced in one line; a warm-up that fails is a clean refusal, never a
-    drill against a cold cache."""
-    if runner.is_warm(settings):
+AUTO_WARM_NOTICE = ("warm-up: copying Hermes's runtime from {source} into {cache} (no network; the source is only "
+                    "read, and the copy is checked to start before it is used); once per temp dir.")
+AUTO_WARM_FALLBACK = "warm-up: the local copy was not used ({reason})."
+WARM_UP_NEEDED = ("WARM_UP_NEEDED: run `hermes provingground warm` in a terminal first (one-time ~650 MB download "
+                  "by Hermes's own installer); the slash command never downloads inside your session.")
+
+
+def local_installs() -> Path | None:
+    """The runtime Hermes already downloaded: the installs dir of the current Hermes home, else of ~/.hermes (a
+    profile or a custom HERMES_HOME may have none of its own). Only ever read."""
+    homes = [Path.home() / ".hermes"]
+    try:
+        from hermes_constants import get_hermes_home
+
+        homes.insert(0, Path(get_hermes_home()))
+    except Exception:  # a Hermes without hermes_constants: only its default home
+        pass
+    return next((home / "installs" for home in homes if (home / "installs").is_dir()), None)
+
+
+def warm_from_local(settings: runner.RunnerSettings) -> bool:
+    """Cold cache, local Hermes installs present: seed the cache from them (`warm --from` logic), in one line.
+    False when there is nothing to copy from or the copy was refused; the refusal is printed, nothing is left."""
+    source = local_installs()
+    if source is None:
+        return False
+    print(AUTO_WARM_NOTICE.format(source=source, cache=settings.warm_cache), file=sys.stderr, flush=True)
+    try:
+        seed.seed_cache(settings, source)
+    except safety.Refusal as refusal:
+        print(AUTO_WARM_FALLBACK.format(reason=f"{refusal.code}: {refusal.message}"), file=sys.stderr, flush=True)
+        return False
+    return runner.is_warm(settings)
+
+
+def ensure_warm(settings: runner.RunnerSettings, allow_download: bool = True) -> None:
+    """Warm the runtime cache once: from your local Hermes installs when they exist (no network), else by
+    Hermes's own installer (announced in one line). A warm-up that fails is a clean refusal, never a drill against
+    a cold cache; without *allow_download* (the slash command) the download is refused instead."""
+    if runner.is_warm(settings) or warm_from_local(settings):
         return
+    if not allow_download:
+        code, _, message = WARM_UP_NEEDED.partition(": ")
+        raise safety.Refusal(code, message)
     print(runner.WARM_NOTICE.format(cache=settings.warm_cache), file=sys.stderr, flush=True)
     run = runner.warm_up(settings)
     if not runner.is_warm(settings):
@@ -235,7 +284,7 @@ def run_matrix(args: argparse.Namespace, on_partial: Callable[[report.LiveFrame]
     runner.sweep_stale_roots(settings.temp_base)
     subjects, skipped = select_subjects(args, settings)
     templates = select_templates(args)
-    ensure_warm(settings)
+    ensure_warm(settings, allow_download=getattr(args, "download_ok", True))
     infos, planned, done = all_infos(templates, settings), planned_columns(subjects), []
     if on_partial is not None:
         on_partial(report.LiveFrame(tuple(infos), planned))
@@ -431,8 +480,13 @@ def terminal_width() -> int:
     return shutil.get_terminal_size((160, 40)).columns
 
 
+def use_color(args: argparse.Namespace) -> bool:
+    """Colour on a terminal unless --no-color or the NO_COLOR convention (any non-empty value) says otherwise."""
+    return not getattr(args, "no_color", False) and not os.environ.get("NO_COLOR") and sys.stdout.isatty()
+
+
 def _live_run(args: argparse.Namespace) -> tuple[matrix.Matrix, str]:
-    color, width = not args.no_color and sys.stdout.isatty(), terminal_width()
+    color, width = use_color(args), terminal_width()
     try:
         from rich.console import Console
         from rich.live import Live
@@ -449,16 +503,21 @@ def _live_run(args: argparse.Namespace) -> tuple[matrix.Matrix, str]:
         return run_matrix(args, lambda part: live.update(frame(part)))
 
 
-NO_EARLIER_REPORT = "since-last: no earlier saved report to compare with; this drill is now the saved one"
+NO_EARLIER_REPORT = "compare latest: no earlier saved report to compare with; this drill is now the saved one"
+COMPARE_LATEST = "latest"  # `--compare latest`: the report saved before this drill (--since-last is its old name)
+
+
+def compares_latest(args: argparse.Namespace) -> bool:
+    return getattr(args, "compare", None) == COMPARE_LATEST or bool(getattr(args, "since_last", False))
 
 
 def earlier_report(args: argparse.Namespace) -> tuple[matrix.Matrix, str] | None:
-    """The report --compare or --since-last compares against, read before the drill: a bad file is refused
-    before anything is spawned, and latest.json is read before this drill replaces it."""
+    """The report --compare compares against, read before the drill: a bad file is refused before anything is
+    spawned, and latest.json is read before this drill replaces it."""
+    if compares_latest(args):
+        return (load_latest(), "the last saved report") if (reports_dir() / LATEST).is_file() else None
     if getattr(args, "compare", None):
         return load_report_file(args.compare), str(args.compare)
-    if getattr(args, "since_last", False) and (reports_dir() / LATEST).is_file():
-        return load_latest(), "the last saved report"
     return None
 
 
@@ -475,17 +534,17 @@ def cmd_run(args: argparse.Namespace) -> int:
     m, note = _live_run(args) if not args.quiet else run_matrix(args)
     saved = save(m)
     if not args.quiet:
-        print(report.render_terminal(m, color=not args.no_color and sys.stdout.isatty(), width=terminal_width(),
+        print(report.render_terminal(m, color=use_color(args), width=terminal_width(),
                                      focus=bool(getattr(args, "focus", False))))
     for line in ([note] if note else []) + [f"saved {saved}"] + [f"wrote {p}" for p in write_exports(m, args)]:
         print(line)
     if getattr(args, "check", False):
         print("\n".join(expectation_lines(m)))
-    if not m.columns[1:] and not getattr(args, "fixtures", False):
+    if not m.columns[1:] and not fixture_stack(args):
         print("ZERO_PLUGINS: no directory plugins besides PROVING GROUND are enabled; the baseline shows Hermes "
               "core only. Try: hermes provingground --fixtures")
     changed = print_comparison(*earlier, shareable(m), "this drill") if earlier else 0
-    if getattr(args, "since_last", False) and earlier is None:
+    if compares_latest(args) and earlier is None:
         print(NO_EARLIER_REPORT)
     return exit_code_for(m, bool(getattr(args, "check", False))) or changed
 
@@ -528,8 +587,13 @@ def cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def warm_status_asked(args: argparse.Namespace) -> bool:
+    """`warm --status` (`warm --check` is its old name, still accepted)."""
+    return bool(getattr(args, "status", False) or getattr(args, "check", False))
+
+
 def cmd_warm(args: argparse.Namespace) -> int:
-    if getattr(args, "check", False):  # read-only preflight: spawns nothing, downloads nothing
+    if warm_status_asked(args):  # read-only preflight: spawns nothing, downloads nothing
         settings = build_settings(args)
         warm = runner.is_warm(settings)
         print(f"{'warm' if warm else 'COLD'}: runtime cache {settings.warm_cache} (temp dir {settings.temp_base})"
@@ -539,6 +603,9 @@ def cmd_warm(args: argparse.Namespace) -> int:
     settings = build_settings(args)
     if getattr(args, "warm_from", None):
         return warm_from(settings, Path(args.warm_from))
+    if runner.is_warm(settings) or warm_from_local(settings):
+        print(f"ready: runtime cache {settings.warm_cache}")
+        return 0
     print(runner.WARM_DISCLOSURE.format(cache=settings.warm_cache), flush=True)
     runner.install_cancellation()
     run = runner.warm_up(settings)
@@ -563,19 +630,32 @@ def warm_from(settings: runner.RunnerSettings, source: Path) -> int:
 
 
 def refuse_misplaced_options(args: argparse.Namespace) -> None:
-    """--from belongs to warm only, and not with --check (which never copies anything)."""
+    """--from and --status belong to warm only, and not together (--status never copies anything)."""
+    action = getattr(args, "action", "run") or "run"
+    if getattr(args, "status", False) and action != "warm":
+        raise safety.Refusal("BAD_OPTION", "--status is for `hermes provingground warm --status` only.")
     if not getattr(args, "warm_from", None):
         return
-    if (getattr(args, "action", "run") or "run") != "warm":
+    if action != "warm":
         raise safety.Refusal("BAD_OPTION", "--from is for `hermes provingground warm --from DIR` only.")
-    if getattr(args, "check", False):
-        raise safety.Refusal("BAD_OPTION", "--check only reports the cache state; drop --from, or drop --check.")
+    if warm_status_asked(args):
+        raise safety.Refusal("BAD_OPTION", "--status only reports the cache state; drop --from, or drop --status.")
 
 
 def cmd_sweep(args: argparse.Namespace) -> int:
     removed = runner.sweep_stale_roots(build_settings(args).temp_base)
     print(f"removed {len(removed)} stale sandbox roots")
     return 0
+
+
+def cmd_lock(args: argparse.Namespace) -> int:
+    """`lock FILE`: run the drill and write the expect: contract pinning every built-in cell to what it observed."""
+    target = getattr(args, "call", None)
+    if not target:
+        raise safety.Refusal("BAD_INPUT", "lock writes a contract file: hermes provingground lock stack.lock.yaml "
+                             "(later: --calls stack.lock.yaml --check)")
+    args.write_contract = target
+    return cmd_run(args)
 
 
 def cmd_diff(args: argparse.Namespace) -> int:
@@ -591,96 +671,115 @@ USAGE_EPILOG = """actions:
   show   the cells with an effect in the latest saved report; `show TC04 --column stack` prints one cell;
          `show --html PATH` (or --json / --markdown / --write-contract) exports the saved report again;
          `show --plugins` lists each plugin's declared hooks (plugin.yaml provides_hooks) and each column's plugins
+  lock   `lock FILE` runs the drill and writes an expect: contract pinning every built-in cell to what it saw
   diff   `diff A.json B.json` prints only what changed between two saved reports (no drill)
-  warm   prepare the isolated Hermes runtime once (network); `warm --check` only reports whether it is ready;
-         `warm --from ~/.hermes/installs` copies it from your Hermes install instead (no network, source only read)
+  warm   prepare the isolated Hermes runtime once: copied from your Hermes installs when there are any (no
+         network), else downloaded by Hermes's own installer; `warm --status` only reports whether it is ready;
+         `warm --from DIR` copies it from another installs dir (the source is only read)
   sweep  remove stale temporary drill roots left by an interrupted drill (only roots PROVING GROUND marked)
 
+outcomes (one per cell; a stack cell that carries a cross-plugin finding says so, e.g. "unseen by fx_guard"):
+  BLOCKED · REWROTE · RESULT CHANGED · APPROVAL-GATED · PASSED THROUGH
+  more: ESCAPED, ERRORED, LOAD FAILED, NOT RUN, N/A (statuses, never results); "(core)" = Hermes itself
+
 examples:
-  hermes provingground warm
   hermes provingground --fixtures
   hermes provingground show TC04 --column stack
   hermes provingground --calls my-calls.yaml --check --json pg-report.json
-  hermes provingground --fixtures --write-contract stack.lock.yaml   # later: --calls stack.lock.yaml --check
-  hermes provingground --since-last --focus
+  hermes provingground lock stack.lock.yaml --fixtures      # later: --calls stack.lock.yaml --check
+  hermes provingground --compare latest --focus
+
+also accepted: --jobs N, --timeout SECONDS, --hermes-bin PATH, --quiet, --no-color (NO_COLOR is honoured)
 
 exit codes:
-  0    done (with --check: every expect: met; with --compare, --since-last or diff: nothing changed)
+  0    done (with --check: every expect: met; with --compare or diff: nothing changed)
   1    unexpected error (one line plus a crash log path)
   2    refused before running: posture, bad input, unknown name, failed warm-up, no or unreadable report
-  3    a column stopped (timeout, abort), or `warm --check` found the cache cold
+  3    a column stopped (timeout, abort), or `warm --status` found the cache cold
   4    a call was ESCAPED (detected after it ran; that column was stopped)
   5    --check: an expect: was not met or not evaluated, or no expect: was declared
-  6    --compare, --since-last or diff: a plugin, test call, cell outcome or finding changed
+  6    --compare or diff: a plugin, test call, cell outcome or finding changed
        (3, 4 and 5 take precedence)
   130  cancelled (Ctrl-C, SIGTERM, SIGHUP); every child was stopped
 """
+ACTIONS = ("run", "show", "lock", "diff", "warm", "sweep")
+HIDDEN = argparse.SUPPRESS  # accepted, left out of the short help; the epilog names them
+
+
+def _add_run_options(subparser: argparse.ArgumentParser) -> None:
+    group = subparser.add_argument_group("run")
+    group.add_argument("--fixtures", action="store_const", const="demo", default=None,
+                       help="drill the bundled three-plugin demo stack instead of your enabled plugins")
+    group.add_argument("--extended", action="store_true",
+                       help="the demo stack plus a fourth demo plugin (fixtures/extended); implies --fixtures")
+    group.add_argument("--without", action="append", metavar="PLUGIN", help="leave a plugin out (repeatable)")
+    group.add_argument("--only", action="append", metavar="CALL", help="run only these test calls (repeatable)")
+    group.add_argument("--calls", default=None, metavar="FILE",
+                       help="extra test calls (ids U…) and expect: contracts, same validator and grammar")
+    group.add_argument("--check", action="store_true", help="exit 5 unless every declared expect: is met")
+    warm = subparser.add_argument_group("warm")
+    warm.add_argument("--status", action="store_true", help="only report whether the runtime cache is ready")
+    warm.add_argument("--from", dest="warm_from", default=None, metavar="DIR",
+                      help="copy the runtime from this Hermes installs dir (only read)")
 
 
 def _add_report_options(subparser: argparse.ArgumentParser) -> None:
     """Exports, views and comparisons of the matrix a drill (or `show`) produces."""
-    subparser.add_argument("--json", dest="json_out", metavar="PATH", help="also write the JSON report")
-    subparser.add_argument("--markdown", dest="markdown_out", metavar="PATH", help="also write a Markdown report")
-    subparser.add_argument("--html", dest="html_out", metavar="PATH", help="also write the HTML report")
-    subparser.add_argument("--write-contract", dest="write_contract", metavar="PATH",
-                           help="write an expect: file pinning every built-in cell to this outcome (use with "
-                                "--calls PATH --check later)")
-    subparser.add_argument("--focus", action="store_true",
-                           help="terminal and Markdown: hide rows where every cell is PASSED THROUGH; HTML: "
-                                "start with its focus toggle on")
-    since = subparser.add_mutually_exclusive_group()
+    group = subparser.add_argument_group("report")
+    group.add_argument("--column", default=None,
+                       help="column for `show`: baseline, stack, solo:<plugin> or just the plugin name")
+    group.add_argument("--plugins", action="store_true",
+                       help="show: list each tested plugin's declared hooks and the plugins in each column")
+    group.add_argument("--json", dest="json_out", metavar="PATH", help="also write the JSON report")
+    group.add_argument("--markdown", dest="markdown_out", metavar="PATH", help="also write a Markdown report")
+    group.add_argument("--html", dest="html_out", metavar="PATH", help="also write the HTML report")
+    group.add_argument("--write-contract", dest="write_contract", metavar="PATH",
+                       help="write an expect: file pinning every built-in cell to this outcome (the `lock` action)")
+    group.add_argument("--focus", action="store_true",
+                       help="terminal and Markdown: hide rows where every cell is PASSED THROUGH; HTML: start with "
+                            "its focus toggle on")
+    since = subparser.add_argument_group("compare").add_mutually_exclusive_group()
     since.add_argument("--compare", metavar="REPORT", default=None,
-                       help="after the drill, print only what changed against this saved report (exit 6 if any)")
-    since.add_argument("--since-last", dest="since_last", action="store_true",
-                       help="like --compare, against the latest saved report from before this drill")
+                       help="after the drill, print only what changed against REPORT, or against the report saved "
+                            "before this drill with `--compare latest` (exit 6 if anything changed)")
+    since.add_argument("--since-last", dest="since_last", action="store_true", help=HIDDEN)
+
+
+def _add_advanced_options(subparser: argparse.ArgumentParser) -> None:
+    group = subparser.add_argument_group("advanced")
+    group.add_argument("--all-wires", action="store_true",
+                       help="also record the context sent to the model and the final reply: two extra rows, "
+                            "CONTEXT ADDED and REPLY CHANGED")
+    group.add_argument("--pairs", action="store_true",
+                       help="for an effect seen only in the full stack, run pairs of plugins to name the smallest "
+                            f"set that reproduces it (at most {matrix.PAIR_CAP} pair columns)")
+    group.add_argument("--repeat", type=int, default=1, metavar="N",
+                       help=f"run solo columns N times in all (1-{REPEAT_MAX}); runs that disagree mark the cell "
+                            "UNSTABLE")
+    group.add_argument("--jobs", type=int, default=DEFAULT_JOBS, help=HIDDEN)
+    group.add_argument("--timeout", type=float, default=120.0, help=HIDDEN)
+    group.add_argument("--hermes-bin", default=None, help=HIDDEN)
+    group.add_argument("--no-color", action="store_true", help=HIDDEN)
+    group.add_argument("--quiet", action="store_true", help=HIDDEN)
 
 
 def setup_parser(subparser: argparse.ArgumentParser) -> None:
     subparser.formatter_class = argparse.RawDescriptionHelpFormatter
     subparser.epilog = USAGE_EPILOG
-    subparser.add_argument("action", nargs="?", default="run", choices=("run", "show", "diff", "warm", "sweep"),
+    subparser.add_argument("action", nargs="?", default="run", choices=ACTIONS,
                            help="what to do (default: run); see actions below")
     subparser.add_argument("call", nargs="?", default=None,
-                           help="test call id for `show` (e.g. TC04), or the first report for `diff`")
+                           help="test call id for `show` (e.g. TC04), the file for `lock`, or the first report "
+                                "for `diff`")
     subparser.add_argument("target", nargs="?", default=None, help="the second report for `diff`")
-    subparser.add_argument("--column", default=None,
-                           help="column for `show`: baseline, stack, solo:<plugin> or just the plugin name")
-    subparser.add_argument("--fixtures", nargs="?", const="demo", default=None, choices=("demo", "extended"),
-                           help="use the bundled three-plugin demo stack; `--fixtures extended` adds the fourth demo "
-                                "plugin under fixtures/extended (put action words like `show` before this flag)")
-    subparser.add_argument("--without", action="append", metavar="PLUGIN", help="leave a plugin out (repeatable)")
-    subparser.add_argument("--plugins", action="store_true",
-                           help="show: list each tested plugin's declared hooks and the plugins in each column")
-    subparser.add_argument("--only", action="append", metavar="CALL", help="run only these test calls (repeatable)")
-    subparser.add_argument("--calls", default=None, metavar="FILE",
-                           help="extra test calls (ids U…) and expect: contracts, same validator and grammar")
-    subparser.add_argument("--check", action="store_true",
-                           help="run: exit 5 unless every declared expect: is met; warm: only report cache state")
-    subparser.add_argument("--all-wires", action="store_true",
-                           help="also record the context sent to the model (pre_llm_call) and the final reply "
-                                "(transform_llm_output): two extra rows, CONTEXT ADDED and REPLY CHANGED")
-    subparser.add_argument("--pairs", action="store_true",
-                           help="for an effect seen only in the full stack, run pairs of plugins to name the smallest "
-                                f"set that reproduces it (at most {matrix.PAIR_CAP} pair columns)")
-    subparser.add_argument("--repeat", type=int, default=1, metavar="N",
-                           help=f"run each solo column with a plugin effect N times in all (1-{REPEAT_MAX}), every solo "
-                                "column when an effect appears only in the full stack; runs that disagree mark the "
-                                "cell UNSTABLE")
-    subparser.add_argument("--from", dest="warm_from", default=None, metavar="DIR",
-                           help="warm: copy the runtime from an existing Hermes installs dir (e.g. ~/.hermes/installs, "
-                                "only read) instead of downloading it")
-    subparser.add_argument("--jobs", type=int, default=DEFAULT_JOBS,
-                           help=f"columns run in parallel (default {DEFAULT_JOBS})")
-    subparser.add_argument("--timeout", type=float, default=120.0, help="seconds per column before it is stopped")
+    _add_run_options(subparser)
     _add_report_options(subparser)
-    subparser.add_argument("--hermes-bin", default=None, help="path to the hermes executable (default: on PATH)")
-    subparser.add_argument("--no-color", action="store_true", help="plain text output")
-    subparser.add_argument("--quiet", action="store_true", help="no live table; print only file paths")
+    _add_advanced_options(subparser)
     subparser.set_defaults(func=handle_cli)
 
 
-COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {"run": cmd_run, "show": cmd_show, "diff": cmd_diff,
-                                                            "warm": cmd_warm, "sweep": cmd_sweep}
+COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {"run": cmd_run, "show": cmd_show, "lock": cmd_lock,
+                                                            "diff": cmd_diff, "warm": cmd_warm, "sweep": cmd_sweep}
 
 
 def write_crash_log(exc: BaseException) -> Path | None:
@@ -718,15 +817,23 @@ def handle_cli(args: argparse.Namespace) -> int:
         return 1
 
 
+def _parser_defaults() -> argparse.Namespace:
+    """Every option at its CLI default, so the slash path carries the same complete namespace as the CLI."""
+    parser = argparse.ArgumentParser(add_help=False)
+    setup_parser(parser)
+    return parser.parse_args([])
+
+
 def _slash_args(raw: str) -> argparse.Namespace:
     words = raw.split()
     show = bool(words) and words[0] == "show"
     fixtures = ("extended" if "extended" in words else True) if "fixtures" in words else False
-    return argparse.Namespace(action="show" if show else "run", fixtures=fixtures,
-                              call=words[1] if show and len(words) > 1 else None,
-                              column=words[2] if show and len(words) > 2 else None, without=None, only=None,
-                              jobs=DEFAULT_JOBS, timeout=120.0, hermes_bin=None, json_out=None, markdown_out=None,
-                              html_out=None, no_color=True, quiet=True, calls=None, check=False)
+    args = _parser_defaults()
+    args.__dict__.update(action="show" if show else "run", fixtures=fixtures,
+                         call=words[1] if show and len(words) > 1 else None,
+                         column=words[2] if show and len(words) > 2 else None,
+                         no_color=True, quiet=True, download_ok=False)  # a slash drill never downloads
+    return args
 
 
 _SLASH_LOCK = threading.Lock()
@@ -743,21 +850,47 @@ def _register_slash_cleanup() -> None:
         atexit.register(runner.cancel_everything)
 
 
-def _slash_drill(args: argparse.Namespace, platform: str | None) -> None:
+def slash_summary(m: matrix.Matrix) -> str:
+    """What a finished slash drill posts into the chat: the tally, the findings, the cells with an effect."""
+    return "\n".join(["PROVING GROUND drill finished (model: NOT CALLED).",
+                      f"{report.OBSERVED.format(n=m.conditions.n_calls)} {matrix.tally(m)}",
+                      *report.finding_lines(m), notable_text(m)])
+
+
+def post_quietly(post: Callable[[str], Any] | None, text: str) -> None:
+    """ctx.post_message never raises by contract (ok=False when this surface has no conversation); a Hermes
+    without it, or a refused post, leaves `/provingground show` as the way to read the result."""
+    if post is None:
+        return
+    try:
+        post(text)
+    except Exception:
+        return
+
+
+def _slash_drill(args: argparse.Namespace, platform: str | None, post: Callable[[str], Any] | None = None) -> None:
     try:
         m, _note = run_matrix(args, platform=platform)
         save(m)
+        summary = slash_summary(m)
     except BaseException as exc:  # recorded, so show reports the failure instead of a stale report
         record_drill_failure(exc)
+        summary = (f"PROVING GROUND drill failed: {getattr(exc, 'code', type(exc).__name__)}: "
+                   f"{str(getattr(exc, 'message', exc))[:300]}")
     finally:
         _SLASH_LOCK.release()
+    post_quietly(post, summary)
 
 
-def _start_slash_drill(args: argparse.Namespace, platform: str | None) -> None:
+def _start_slash_drill(args: argparse.Namespace, platform: str | None,
+                       post: Callable[[str], Any] | None = None) -> None:
+    """The drill thread runs in a copy of the caller's context, so post_message still finds the calling session
+    (Hermes binds it in context variables, which a plain thread does not inherit)."""
     clear_drill_failure()
     _register_slash_cleanup()
     try:
-        threading.Thread(target=_slash_drill, args=(args, platform), daemon=True, name="provingground-drill").start()
+        threading.Thread(target=contextvars.copy_context().run, args=(_slash_drill, args, platform, post),
+                         daemon=True, name="provingground-drill").start()
     except BaseException:
         _SLASH_LOCK.release()  # a thread that never started never releases the lock itself
         raise
@@ -788,20 +921,28 @@ def _slash_show(args: argparse.Namespace) -> str:
     return body
 
 
-def handle_slash(raw_args: str = "", *, platform: str = "", session_id: str = "", **_: Any) -> str:
+SLASH_STARTED = ("Drill started in the background (about 30 s; model: NOT CALLED). When it finishes, its summary is "
+                 "posted here where this chat surface supports it; `/provingground show` reads it any time.")
+SLASH_COPYING = ("First run: Hermes's runtime is copied from {source} first (no network; the source is only read), "
+                 "which adds about a minute.")
+
+
+def handle_slash(raw_args: str = "", *, platform: str = "", session_id: str = "",
+                 post: Callable[[str], Any] | None = None, **_: Any) -> str:
+    """*post* is the plugin context's post_message (Hermes 0.23+), passed by the plugin entry when it exists."""
     args = _slash_args(raw_args or "")
     try:
         if args.action == "show":
             return _slash_show(args)
         note = check_live_posture(user_config(), platform or None)
         settings = build_settings(args)
-        if not runner.is_warm(settings):
-            return ("WARM_UP_NEEDED: run `hermes provingground warm` in a terminal first (one-time ~650 MB download "
-                    "by Hermes's own installer); the slash command never warms inside your session.")
+        source = None if runner.is_warm(settings) else local_installs()
+        if not runner.is_warm(settings) and source is None:
+            return WARM_UP_NEEDED
         if not _SLASH_LOCK.acquire(blocking=False):
             return "A drill is already running; `/provingground show` reads the latest saved report."
-        _start_slash_drill(args, platform or None)
-        return "\n".join(filter(None, ["Drill started in the background (about 30 s; model: NOT CALLED). "
-                                        "Read it with `/provingground show` or `hermes provingground show`.", note]))
+        _start_slash_drill(args, platform or None, post)
+        copying = SLASH_COPYING.format(source=source) if source else ""
+        return "\n".join(filter(None, [SLASH_STARTED, copying, note]))
     except safety.Refusal as refusal:
         return f"{refusal.code}: {refusal.message}"

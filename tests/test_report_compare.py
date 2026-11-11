@@ -154,4 +154,15 @@ def test_compare_and_since_last_cannot_be_combined() -> None:
 
 
 def test_help_documents_exit_6() -> None:
-    assert "  6    --compare, --since-last or diff" in cli.USAGE_EPILOG
+    assert "  6    --compare or diff" in cli.USAGE_EPILOG
+
+
+def test_compare_latest_is_the_since_last_comparison_and_since_last_stays_hidden(monkeypatch, capsys) -> None:
+    _fake_run(monkeypatch, [fixture_like_matrix(), without_rewriter()])
+    assert cli.handle_cli(_run_args(compare="latest")) == 0
+    assert cli.NO_EARLIER_REPORT in capsys.readouterr().out
+    assert cli.handle_cli(_run_args(compare="latest")) == 6
+    assert "compared the last saved report" in capsys.readouterr().out
+    parser = argparse.ArgumentParser()
+    cli.setup_parser(parser)
+    assert parser.parse_args(["--since-last"]).since_last and "--since-last" not in parser.format_help()
