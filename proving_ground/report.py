@@ -214,8 +214,13 @@ def _clip(text: str | None) -> list[str]:
     return lines[:MAX_DETAIL_LINES] + [f"[{len(lines) - MAX_DETAIL_LINES} more lines]"]
 
 
-def _diff(old: str | None, new: str | None) -> list[str]:
-    return list(difflib.unified_diff(_clip(old), _clip(new), "baseline delivered", "this column delivered", lineterm=""))
+def _diff(old: str | None, new: str | None, what: str = "delivered") -> list[str]:
+    return list(difflib.unified_diff(_clip(old), _clip(new), f"baseline {what}", f"this column {what}", lineterm=""))
+
+
+def _delivered_diff(old: str | None, new: str | None) -> list[str]:
+    """Diff a terminal result's output line by line; fall back to the whole string when only other fields differ."""
+    return _diff(mx.tool_output(old), mx.tool_output(new), "delivered output") or _diff(old, new)
 
 
 def _attribution_for(m: mx.Matrix, call_id: str) -> list[str]:
@@ -237,7 +242,7 @@ def detail_sections(m: mx.Matrix, column: str, call_id: str) -> list[tuple[str, 
             (f"2 · tool result before result rewriters · {QUOTE_TITLE}", quoted(_clip(obs.tool_raw))),
             (f"3 · delivered to the model · {QUOTE_TITLE}", quoted(_clip(obs.delivered))),
             (f"delivered: baseline vs this column · {QUOTE_TITLE}",
-             quoted(_diff(base.delivered, obs.delivered) or ["identical"]))]
+             quoted(_delivered_diff(base.delivered, obs.delivered) or ["identical"]))]
 
 
 def render_cell_detail(m: mx.Matrix, column: str, call_id: str) -> str:

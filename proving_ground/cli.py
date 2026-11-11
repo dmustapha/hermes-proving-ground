@@ -197,7 +197,8 @@ def _live_run(args: argparse.Namespace) -> tuple[matrix.Matrix, str]:
     except ImportError:
         return run_matrix(args)
     console = Console()
-    with Live(Text("starting the throwaway child Hermes · model: NOT CALLED"), console=console, refresh_per_second=8) as live:
+    with Live(Text("starting the throwaway child Hermes · model: NOT CALLED"), console=console, refresh_per_second=8,
+              transient=True) as live:  # the final render is printed once by cmd_run
         return run_matrix(args, lambda part: live.update(Text.from_ansi(report.render_terminal(part, color))))
 
 
