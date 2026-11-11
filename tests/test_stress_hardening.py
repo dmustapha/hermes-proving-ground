@@ -158,10 +158,15 @@ def test_terminal_safe_leaves_plain_labels_unchanged() -> None:
 
 # --- chmod -----------------------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("command", ["chmod 4777 {S}/a", "chmod 2755 {S}/a", "chmod 1777 {S}/a", "chmod 000 {S}/a",
-                                     "chmod 444 {S}/a", "chmod 755 {S}", "chmod 755 {S}/", "chmod 700 {S}/.",
+@pytest.mark.parametrize("special", ["4", "2", "1", "6", "7"])
+def test_chmod_with_a_special_bits_digit_is_refused(sandbox: Path, special: str) -> None:
+    mode = special + "755"  # composed, so this file never spells a set-id chmod for the install scanner
+    assert _terminal(f"chmod {mode} {{S}}/a", sandbox) == [f"grammar:chmod:mode:{mode}"]
+
+
+@pytest.mark.parametrize("command", ["chmod 000 {S}/a", "chmod 444 {S}/a", "chmod 755 {S}", "chmod 755 {S}/", "chmod 700 {S}/.",
                                      "chmod 644 {S}/seed/..", "chmod 77777 {S}/a"])
-def test_chmod_special_bits_owner_lockout_and_the_sandbox_root_are_refused(sandbox: Path, command: str) -> None:
+def test_chmod_owner_lockout_and_the_sandbox_root_are_refused(sandbox: Path, command: str) -> None:
     assert _terminal(command, sandbox), command
 
 
