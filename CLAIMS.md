@@ -105,3 +105,9 @@
 | CL-91 | Each plugin gets a line with the hooks and middleware it registered, which fired, which never fired (UNTESTED), and its registered tools and commands (not exercised). | test | tests/test_middleware_census.py::test_census_line_lists_registered_fired_untested_and_unexercised |
 | CL-92 | A middleware effect on a call Hermes core also changes is attributed to the plugin, and the core effect still is not. | test | tests/test_middleware_census.py::test_a_middleware_effect_on_a_core_cell_never_blames_the_plugin_for_core_truncation |
 | CL-93 | In the drill child, each plugin's callbacks receive exactly the arguments Hermes would have passed them. | test | tests/test_middleware_census.py::test_watcher_wraps_only_subject_callbacks_and_keeps_their_arguments |
+| CL-94 | With `--attended`, Hermes shows its own approval prompt in a terminal and the person answers: approve, deny and a 60 s timeout are each recorded as that answer. | test | tests/test_attended.py::test_pty_hermes_asks_and_the_human_answers |
+| CL-95 | In attended mode PROVING GROUND writes nothing of its own to the child's terminal; it only relays the user's keystrokes. | test | tests/test_attended.py::test_the_only_write_to_the_child_carries_the_users_own_keystrokes |
+| CL-96 | `--attended` refuses without a terminal, on a messaging platform, and in gateway, cron or single-query sessions. | test | tests/test_attended.py::test_attended_refusals |
+| CL-96b | `--attended` refuses under YOLO or approvals off and spawns nothing. | test | tests/test_attended.py::test_cli_refuses_yolo_and_approvals_off_on_a_tty |
+| CL-96c | The `/provingground` slash command refuses `attended`. | test | tests/test_attended.py::test_slash_command_refuses_attended |
+| CL-97 | The attended child keeps approvals manual and the unattended modes on deny, with a 60 s prompt and no bypass flag. | test | tests/test_attended.py::test_attended_child_config_keeps_manual_and_deny_with_a_60_s_prompt |
