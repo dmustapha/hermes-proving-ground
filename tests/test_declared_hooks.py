@@ -46,7 +46,7 @@ def test_json_report_has_column_metadata_that_round_trips() -> None:
 def test_a_report_without_declared_hooks_keeps_its_old_keys_and_headers() -> None:
     m = fixture_like_matrix()
     assert "column_meta" not in report.matrix_to_dict(m)
-    assert "<th>fx_trimmer</th>" in report.render_html(m)
+    assert "<th scope='col'>fx_trimmer</th>" in report.render_html(m)
 
 
 def test_default_terminal_table_is_unchanged_by_declared_hooks() -> None:

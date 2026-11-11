@@ -26,7 +26,7 @@ MAX_DETAIL_LINES = 40
 MAX_DETAIL_CHARS = 8192  # per detail section; a single-line JSON result is otherwise unbounded
 LIVE_BANNER = "model: NOT CALLED · provider: none · no provider keys · approvals: manual, headless deny"
 STYLE = {mx.Outcome.BLOCKED: "bold cyan", mx.Outcome.REWROTE: "bold yellow", mx.Outcome.RESULT_CHANGED: "bold magenta",
-         mx.Outcome.APPROVAL_GATED: "bold blue", mx.Outcome.PASSED_THROUGH: "dim", mx.Outcome.ESCAPED: "bold red",
+         mx.Outcome.APPROVAL_GATED: "bold bright_blue", mx.Outcome.PASSED_THROUGH: "dim", mx.Outcome.ESCAPED: "bold red",
          mx.Outcome.ERRORED: "red", mx.Outcome.LOAD_FAILED: "red", mx.Outcome.NOT_RUN: "dim",
          mx.Outcome.NOT_APPLICABLE: "dim", mx.Outcome.CONTEXT_ADDED: "bold green",
          mx.Outcome.REPLY_CHANGED: "bold green", mx.Outcome.EXECUTION_REPLACED: "bold cyan",
@@ -693,49 +693,102 @@ def render_contract(m: mx.Matrix) -> str:
 # File: proving_ground/report.py  (part 3 of 3: self-contained HTML)
 
 CSS = """
-:root{color-scheme:light dark;--bg:#fbfaf7;--fg:#1d1d1f;--muted:#6b6b70;--line:#e6e3dd;--card:#ffffff;--code:#f6f4ef;
---blocked:#0e7490;--rewrote:#a16207;--changed:#a21caf;--gated:#1d4ed8;--through:#8a8a8f;--escaped:#b91c1c;--errored:#b91c1c;--wire:#15803d}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121214;--fg:#ececef;--muted:#9a9aa2;
---line:#2a2a2e;--card:#1a1a1d;--code:#141416;--blocked:#22d3ee;--rewrote:#facc15;--changed:#e879f9;--gated:#60a5fa;
---through:#8a8a8f;--escaped:#f87171;--errored:#f87171;--wire:#4ade80}}
-*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:1180px;margin:0 auto;padding:32px 16px 48px}a{color:var(--gated)}
-h1{font-size:clamp(19px,4.8vw,26px);line-height:1.25;letter-spacing:-.01em;margin:0 0 6px}.muted{color:var(--muted)}
-h3{font-size:13px;font-weight:600;color:var(--muted);margin:18px 0 6px}.panel h3:first-child{margin-top:0}
-.box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:16px 0}
-.box ul{margin:8px 0 0;padding-left:18px}.box li{margin:3px 0;overflow-wrap:anywhere}
-.small{font-size:13.5px}.scroll{overflow-x:auto;padding:6px 8px}details.box summary{cursor:pointer;font-weight:600}
-.mark{display:block;margin-top:4px;font:600 11.5px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--escaped)}
-.lead{font-size:16px;font-weight:600}
-table{border-collapse:separate;border-spacing:0;width:100%}th,td{border-bottom:1px solid var(--line);padding:9px 10px;
-text-align:left;white-space:nowrap;vertical-align:top}tbody tr:last-child>*{border-bottom:0}
-thead th{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
-thead th .hooks{display:block;font:400 11px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:none;letter-spacing:0;white-space:normal;max-width:190px}
-tbody th{font-weight:600;white-space:normal;min-width:150px}tbody th .muted{display:block;font-weight:400;font-size:13px}
+:root{color-scheme:light dark;
+--bg:#fbfaf7;--fg:#1d1d1f;--muted:#5f5f66;--line:#e6e3dd;--card:#ffffff;--code:#f6f4ef;--focus:#1d4ed8;
+--blocked:#155e75;--rewrote:#854d0e;--changed:#a21caf;--gated:#1d4ed8;--through:#5f5f66;
+--finding:#b91c1c;--escaped:var(--finding);--errored:#b91c1c;--wire:#166534;
+--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+--sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+--r-card:12px;--r-badge:6px;--s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:32px;--s7:48px}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+--bg:#121214;--fg:#ececef;--muted:#9a9aa2;--line:#2a2a2e;--card:#1a1a1d;--code:#141416;--focus:#60a5fa;
+--blocked:#22d3ee;--rewrote:#facc15;--changed:#e879f9;--gated:#60a5fa;--through:#8a8a8f;
+--finding:#f87171;--errored:#f87171;--wire:#4ade80}}
+:root[data-theme="dark"]{
+--bg:#121214;--fg:#ececef;--muted:#9a9aa2;--line:#2a2a2e;--card:#1a1a1d;--code:#141416;--focus:#60a5fa;
+--blocked:#22d3ee;--rewrote:#facc15;--changed:#e879f9;--gated:#60a5fa;--through:#8a8a8f;
+--finding:#f87171;--errored:#f87171;--wire:#4ade80}
+
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 var(--sans)}
+main{max-width:1180px;margin:0 auto;padding:var(--s6) var(--s4) var(--s7)}
+a{color:var(--gated);text-underline-offset:2px}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
+h1{font-size:clamp(1.2rem,4.8vw,1.625rem);line-height:1.25;letter-spacing:-.01em;margin:0 0 6px}
+.muted{color:var(--muted)}
+h2{font-size:.8125rem;font-weight:600;color:var(--muted);margin:18px 0 6px}.panel h2:first-child{margin-top:0}
+.box{background:var(--card);border:1px solid var(--line);border-radius:var(--r-card);padding:var(--s4) 18px;margin:var(--s4) 0}
+.box ul{margin:var(--s2) 0 0;padding-left:18px}.box li{margin:3px 0;overflow-wrap:anywhere}
+.small{font-size:.84375rem}
+.scroll{overflow-x:auto;padding:6px var(--s2);-webkit-overflow-scrolling:touch}
+.scroll:focus-visible{outline-offset:-2px}
+details.box summary{cursor:pointer;font-weight:600;min-height:28px}
+details.box summary:hover{color:var(--gated)}
+.lead{font-size:1rem;font-weight:600}
+
+/* matrix */
+table{border-collapse:separate;border-spacing:0;width:100%}
+th,td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:left;white-space:nowrap;vertical-align:top}
+tbody tr:last-child>*{border-bottom:0}
+thead th{font-size:.75rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+thead th:last-child{color:var(--fg)}
+thead th .hooks{display:block;font:400 11px/1.3 var(--mono);text-transform:none;letter-spacing:0;white-space:normal;max-width:190px}
+tbody th{font-weight:600;white-space:normal;min-width:150px}tbody th .muted{display:block;font-weight:400;font-size:.8125rem}
 th:first-child{position:sticky;left:0;z-index:1;background:var(--card)}
-td a{display:inline-block;text-decoration:none;font:600 12px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;
-letter-spacing:.02em;padding:5px 8px;border-radius:6px}td a:hover{outline:1px solid currentColor}
-td a:focus-visible{outline:2px solid currentColor;outline-offset:2px}
-.BLOCKED{color:var(--blocked);background:color-mix(in srgb,var(--blocked) 13%,transparent)}
-.REWROTE{color:var(--rewrote);background:color-mix(in srgb,var(--rewrote) 13%,transparent)}
+tbody tr:hover>*{background:color-mix(in srgb,var(--fg) 3%,var(--card))}
+
+/* "show only rows with a recorded effect" toggle */
+#focus{width:18px;height:18px;margin:0 8px 0 2px;vertical-align:-3px;accent-color:var(--gated);cursor:pointer}
+#focus+label{font-size:.84375rem;color:var(--muted);cursor:pointer;line-height:2.2}
+#focus+label:hover{color:var(--fg)}
+#focus:focus-visible+label{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
+#focus:checked~#matrix tr.quiet{display:none}
+
+/* outcome badges (td a = link to the cell detail; td span = no detail) */
+td a,td>span[class]:not(.mark){display:inline-block;text-decoration:none;font:600 12px/1.2 var(--mono);letter-spacing:.02em;
+padding:5px 8px;border-radius:var(--r-badge);transition:outline-color .15s}
+td a{outline:1px solid transparent;outline-offset:0}
+td a:hover{outline-color:currentColor}
+td a:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.BLOCKED,.EXECUTION_REPLACED{color:var(--blocked);background:color-mix(in srgb,var(--blocked) 13%,transparent)}
+.REWROTE,.REQUEST_REWRITTEN{color:var(--rewrote);background:color-mix(in srgb,var(--rewrote) 13%,transparent)}
 .RESULT_CHANGED{color:var(--changed);background:color-mix(in srgb,var(--changed) 13%,transparent)}
 .APPROVAL_GATED{color:var(--gated);background:color-mix(in srgb,var(--gated) 13%,transparent)}
-.REQUEST_REWRITTEN{color:var(--rewrote);background:color-mix(in srgb,var(--rewrote) 13%,transparent)}
-.EXECUTION_REPLACED{color:var(--blocked);background:color-mix(in srgb,var(--blocked) 13%,transparent)}
 .CONTEXT_ADDED,.REPLY_CHANGED,.MODEL_REPLY_CHANGED,.TURN_EXTENDED{color:var(--wire);background:color-mix(in srgb,var(--wire) 13%,transparent)}
 .ESCAPED{color:var(--escaped);background:color-mix(in srgb,var(--escaped) 16%,transparent)}
 .ERRORED,.LOAD_FAILED{color:var(--errored);background:color-mix(in srgb,var(--errored) 10%,transparent)}
-.PASSED_THROUGH,.NOT_EXECUTED,.NOT_RUN,.NOT_APPLICABLE{color:var(--through);font-weight:500}
-.panel{display:none;scroll-margin-top:16px}.panel:target{display:block}
+.PASSED_THROUGH,.NOT_EXECUTED,.NOT_RUN,.NOT_APPLICABLE{color:var(--through);font-weight:500;background:none}
+
+/* the cross-plugin finding: "REWROTE · unseen by fx_guard" */
+.mark{display:block;margin-top:var(--s1);font:600 11.5px/1.3 var(--mono);color:var(--finding)}
+td:has(.mark){background:color-mix(in srgb,var(--finding) 6%,var(--card));box-shadow:inset 0 0 0 2px var(--finding);border-radius:8px}
+
+/* cell detail panels */
+.panel{display:none;scroll-margin-top:var(--s4)}.panel:target{display:block}
+.panel:target{box-shadow:0 0 0 2px color-mix(in srgb,var(--focus) 40%,transparent)}
 pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:0;overflow-x:auto;
-white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}pre.quoted{border-left:3px solid var(--muted)}
-.add,.del{display:inline-block;min-width:100%}.add{color:var(--changed);background:color-mix(in srgb,var(--changed) 11%,transparent)}
+white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.5 var(--mono)}
+pre.quoted{border-left:3px solid var(--muted)}
+.add,.del{display:inline-block;min-width:100%}
+.add{color:var(--changed);background:color-mix(in srgb,var(--changed) 11%,transparent)}
 .del{color:var(--rewrote);background:color-mix(in srgb,var(--rewrote) 11%,transparent)}
-.panel p a{display:inline-block;margin-top:14px;text-decoration:none;font-weight:600}
-#focus{margin:0 6px 0 2px;vertical-align:-1px;accent-color:var(--gated)}#focus+label{font-size:13.5px;color:var(--muted);cursor:pointer}
-#focus:checked~#matrix tr.quiet{display:none}#focus:focus-visible+label{outline:2px solid var(--gated);outline-offset:2px}
-@media (max-width:480px){main{padding:20px 12px 40px}.box{padding:14px}tbody th{min-width:118px}}
+.panel p a{display:inline-flex;align-items:center;min-height:44px;margin-top:6px;text-decoration:none;font-weight:600}
+
+/* phone width */
+@media (max-width:640px){
+main{padding:var(--s5) var(--s4) var(--s6)}
+.box{padding:var(--s3) 14px;border-radius:10px}
+.scroll{padding:2px 0;margin-left:calc(-1 * var(--s2));margin-right:calc(-1 * var(--s2))}
+th,td{padding:8px}
+tbody th{min-width:118px;max-width:150px}
+tbody th .muted{font-size:.75rem}
+thead th .hooks{max-width:140px}
+td a{min-height:32px;display:inline-flex;align-items:center}
+pre{font-size:12px}
+}
+@media print{.panel{display:block;break-inside:avoid}.scroll{overflow:visible}td:has(.mark){box-shadow:none;outline:2px solid #000}}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 """
 
 
@@ -762,12 +815,12 @@ def _html_lines(lines: list[str]) -> str:
 
 
 def _html_panel(m: mx.Matrix, column: str, call_id: str) -> str:
-    parts = [f'<section class="panel box" id="{_anchor(column, call_id)}">']
+    parts = [f'<section class="panel box" id="{_anchor(column, call_id)}" tabindex="-1">']
     for title, lines in detail_sections(m, column, call_id):
         quote = bool(lines) and all(x.startswith(QUOTE_PREFIX) for x in lines)
         body = [x[len(QUOTE_PREFIX):] for x in lines] if quote else lines
         cls = ' class="quoted"' if quote else ""
-        parts.append(f"<h3>{html.escape(title)}</h3><pre{cls}>{_html_lines(body)}</pre>")
+        parts.append(f"<h2>{html.escape(title)}</h2><pre{cls}>{_html_lines(body)}</pre>")
     return "".join(parts) + '<p><a href="#matrix">← back to the matrix</a></p></section>'
 
 
@@ -781,15 +834,15 @@ def _html_focus_toggle(m: mx.Matrix, focus: bool) -> str:
 def _html_header(m: mx.Matrix, name: str) -> str:
     """The column title, the hooks its plugins declare in a hover title, and a compact line under the title."""
     if not m.column_plugins:  # a report from before declared hooks were recorded
-        return f"<th>{html.escape(header_title(m, name))}</th>"
+        return f"<th scope='col'>{html.escape(header_title(m, name))}</th>"
     full = "; ".join(f"{k}: {', '.join(h) or 'none declared'}" for k, h in column_hooks(m, name)) or "no plugins"
-    return (f"<th title='{html.escape(f'declared hooks: {full}', quote=True)}'>{html.escape(header_title(m, name))}"
+    return (f"<th scope='col' title='{html.escape(f'declared hooks: {full}', quote=True)}'>{html.escape(header_title(m, name))}"
             f"<br><span class='hooks'>{html.escape(hooks_summary(m, name))}</span></th>")
 
 
 def render_html(m: mx.Matrix, focus: bool = False) -> str:
     head, marks = "".join(_html_header(m, n) for n in m.columns), finding_marks(m)
-    rows = "".join(f"<tr{' class=quiet' if mx.quiet_row(m, c.id) else ''}><th>{html.escape(c.id)} "
+    rows = "".join(f"<tr{' class=quiet' if mx.quiet_row(m, c.id) else ''}><th scope='row'>{html.escape(c.id)} "
                    f"<span class='muted'>{html.escape(c.subject)}</span></th>"
                    + "".join(_html_cell(m, n, c.id, marks) for n in m.columns) + "</tr>" for c in m.calls)
     panels = "".join(_html_panel(m, col, cid) for (col, cid) in m.cells
@@ -803,7 +856,7 @@ def render_html(m: mx.Matrix, focus: bool = False) -> str:
             f"<style>{CSS}</style></head><body><main><h1>{html.escape(HEADLINE)}</h1>"
             f"<p class='muted'>{html.escape(OBSERVED.format(n=m.conditions.n_calls))} {html.escape(mx.tally(m))}</p>"
             f"<div class='box'><strong>Findings</strong><ul>{findings}</ul></div>{_html_focus_toggle(m, focus)}"
-            f"<div class='box scroll' id='matrix'><table><thead><tr><th>test call</th>{head}</tr></thead>"
+            f"<div class='box scroll' id='matrix'><table><caption class='sr-only'>What each plugin column did to each test call</caption><thead><tr><th scope='col'>test call</th>{head}</tr></thead>"
             f"<tbody>{rows}</tbody></table></div><div class='box small'><ul>{notes}</ul></div>"
             f"<details class='box small'><summary>Drill conditions</summary><ul>{cond}</ul></details>{panels}"
             f"<p class='muted'>{html.escape(SCOPE_NOTE)}</p></main></body></html>")
