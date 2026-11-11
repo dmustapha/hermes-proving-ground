@@ -378,17 +378,37 @@ def attribute(stack: Mapping[str, Cell], base: Mapping[str, Cell], solos: Mappin
             for cid, cell in stack.items() for outcome in cell.outcomes if outcome not in QUIET]
 
 
-def _masked(stack: Mapping[str, Cell], solos: Mapping[str, Mapping[str, Cell]]) -> list[Finding]:
+GATES = frozenset({Outcome.BLOCKED, Outcome.APPROVAL_GATED, Outcome.ERRORED})
+
+
+def _lost(cid: str, stack_cell: Cell, solos: Mapping[str, Mapping[str, Cell]]) -> list[tuple[str, Outcome]]:
+    """(plugin, outcome) solo effects on cid that do not reach the model in the full stack."""
+    reached = set() if stack_cell.core else set(stack_cell.outcomes)  # a core-only stack cell carries no plugin effect
+    return [(key, outcome) for key, cells in solos.items() if not cells[cid].core  # core's own effect, not the plugin's
+            for outcome in sorted(set(cells[cid].outcomes) - QUIET - reached, key=PRECEDENCE.index)]
+
+
+def _grouped_mask(cid: str, gate: Outcome, lost: Sequence[tuple[str, Outcome]],
+                  attributions: Sequence[Attribution]) -> Finding:
+    """One finding per blocker x call: the other plugins' effects are consequences of one block (point b)."""
+    blockers = next((a.plugins for a in attributions if a.call_id == cid and a.outcome is gate), ())
+    masked = tuple(dict.fromkeys(k for k, _o in lost if k not in blockers))
+    effects = ", ".join(f"{k} {LABELS[o]}" for k, o in lost)
+    return Finding("MASKED_IN_STACK", cid, (*blockers, *masked),
+                   f"{', '.join(blockers) or 'the stack'} {LABELS[gate]} {cid} in the full stack, so what other plugins "
+                   f"do to it on their own does not reach the model: {effects}.")
+
+
+def _masked(stack: Mapping[str, Cell], solos: Mapping[str, Mapping[str, Cell]],
+            attributions: Sequence[Attribution] = ()) -> list[Finding]:
     found = []
-    for key, cells in solos.items():
-        for cid, cell in cells.items():
-            if cell.core:  # Hermes core's own effect (e.g. the approval gate), not the plugin's
-                continue
-            reached = set() if stack[cid].core else set(stack[cid].outcomes)  # a core-only stack cell: no plugin effect
-            for outcome in set(cell.outcomes) - QUIET - reached:
-                found.append(Finding("MASKED_IN_STACK", cid, (key,),
-                                     f"{key} {LABELS[outcome]} {cid} on its own; in the full stack that effect "
-                                     "does not reach the model."))
+    for cid, stack_cell in stack.items():
+        lost = _lost(cid, stack_cell, solos)
+        if lost and stack_cell.primary in GATES and not stack_cell.core:
+            found.append(_grouped_mask(cid, stack_cell.primary, lost, attributions))
+            continue
+        found += [Finding("MASKED_IN_STACK", cid, (key,), f"{key} {LABELS[outcome]} {cid} on its own; in the full "
+                          "stack that effect does not reach the model.") for key, outcome in lost]
     return found
 
 
@@ -466,7 +486,7 @@ def build_matrix(columns: Sequence[ColumnRun], baseline_repeat: ColumnRun | None
     stack = grid.get("stack") or (next(iter(solos.values())) if len(solos) == 1 else {})
     attributions = attribute(stack, grid["baseline"], usable, tuple(k for k in order if k in usable)) if stack else []
     cross = {k: _column_cells(c, c, frozenset()) for k, c in crosscheck.items() if not c.load_failed}
-    findings = _unseen(grid.get("stack", {}), cross, attributions) + _masked(grid.get("stack", {}), usable) \
+    findings = _unseen(grid.get("stack", {}), cross, attributions) + _masked(grid.get("stack", {}), usable, attributions) \
         if "stack" in grid else []
     findings += _escapes(list(columns) + list(crosscheck.values()))
     connects = [c for col in list(columns) + list(crosscheck.values()) for c in col.connects]
