@@ -47,3 +47,15 @@ def test_every_cell_carries_provenance() -> None:
     data = report.matrix_to_dict(fixture_like_matrix())
     assert {c["provenance"] for c in data["cells"]} == {"baseline", "solo", "stack"}
     assert report.render_terminal(fixture_like_matrix(), color=False).count("model: NOT CALLED") == 1
+
+
+def test_notable_cells_lists_effects() -> None:
+    lines = report.notable_cells(fixture_like_matrix())
+    text = "\n".join(lines)
+    for call_id in ("TC02", "TC03", "TC04"):
+        assert f"{call_id} --column stack" in text
+    assert "TC01" not in text
+    assert any(line.startswith("TC04 --column stack") and "RESULT CHANGED" in line and line.endswith("(fx_trimmer)")
+               for line in lines)
+    assert any(line.startswith("TC05 --column baseline") and line.endswith("RESULT CHANGED (core)") for line in lines)
+    assert report.forbidden_claims(text) == []

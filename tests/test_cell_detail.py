@@ -56,11 +56,11 @@ def test_live_view_is_transient_so_the_table_prints_once(monkeypatch) -> None:
     m = fixture_like_matrix()
 
     def fake_run(args, on_partial=None, platform=None):
-        on_partial(m)
+        on_partial(report.LiveFrame(m.calls, tuple(m.columns), m.cells))
         return m, ""
 
     monkeypatch.setattr(cli, "run_matrix", fake_run)
-    monkeypatch.setattr(cli.report, "render_terminal", lambda part, color=True: "LIVE-FRAME\n")
+    monkeypatch.setattr(cli.report, "render_live", lambda part, color=True, width=160: "LIVE-FRAME\n")
     import rich.console
 
     sink, real_console = io.StringIO(), rich.console.Console

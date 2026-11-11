@@ -8,8 +8,8 @@ import difflib
 import html
 import io
 import re
-from dataclasses import asdict
-from typing import Any, Mapping
+from dataclasses import asdict, dataclass, field
+from typing import Any, Mapping, Sequence
 
 from . import matrix as mx
 
@@ -22,6 +22,7 @@ FORBIDDEN_CLAIMS = (re.compile(r"\bsafe\b", re.I), re.compile(r"\bsecure[ds]?\b"
                     re.compile(r"\bprotected\b", re.I), re.compile(r"\bguarantee", re.I),
                     re.compile(r"\bcertif", re.I), re.compile(r"\bpassed\b(?!\s+through)", re.I))
 MAX_DETAIL_LINES = 40
+LIVE_BANNER = "model: NOT CALLED · provider: none · no provider keys · approvals: manual, headless deny"
 STYLE = {mx.Outcome.BLOCKED: "bold cyan", mx.Outcome.REWROTE: "bold yellow", mx.Outcome.RESULT_CHANGED: "bold magenta",
          mx.Outcome.APPROVAL_GATED: "bold blue", mx.Outcome.PASSED_THROUGH: "dim", mx.Outcome.ESCAPED: "bold red",
          mx.Outcome.ERRORED: "red", mx.Outcome.LOAD_FAILED: "red", mx.Outcome.NOT_RUN: "dim",
@@ -64,6 +65,31 @@ def cell_label(cell: mx.Cell) -> str:
 
 def column_title(name: str) -> str:
     return {"baseline": "baseline (no plugins)", "stack": "FULL STACK"}.get(name, name.removeprefix("solo:"))
+
+
+def short_title(name: str) -> str:
+    return {"baseline": "baseline", "stack": "FULL STACK"}.get(name, name.removeprefix("solo:"))
+
+
+def _source(m: mx.Matrix, cell: mx.Cell) -> str:
+    """Who the effect is attributed to: the solo column's plugin, or the stack attribution's plugins."""
+    if cell.core:
+        return ""
+    if cell.column.startswith("solo:"):
+        return cell.column.removeprefix("solo:")
+    return ", ".join(p for a in m.attributions if a.call_id == cell.call_id for p in a.plugins)
+
+
+def notable_cells(m: mx.Matrix) -> list[str]:
+    """Every cell that ran and is not PASSED THROUGH, as `<CALL> --column <COLUMN>` plus its label and source."""
+    quiet = (mx.Outcome.PASSED_THROUGH, mx.Outcome.NOT_RUN, mx.Outcome.NOT_APPLICABLE)
+    cells = [m.cells[(name, call.id)] for call in m.calls for name in m.columns
+             if (name, call.id) in m.cells and m.cells[(name, call.id)].primary not in quiet]
+    if not cells:
+        return []
+    width = max(len(f"{c.call_id} --column {c.column}") for c in cells) + 2
+    return [f"{c.call_id} --column {c.column}".ljust(width) + cell_label(c)
+            + (f"  ({_source(m, c)})" if _source(m, c) else "") for c in cells]
 
 
 def matrix_to_dict(m: mx.Matrix) -> dict[str, Any]:
@@ -131,20 +157,38 @@ def conditions_lines(m: mx.Matrix) -> list[str]:
             f"wall time: {c.wall_s:.1f}s · started {c.started_at}"]
 
 
-def _rich_table(m: mx.Matrix) -> Any:
+def _rich_table(calls: Sequence[mx.CallInfo], columns: Sequence[str],
+                cells: Mapping[tuple[str, str], mx.Cell], call_width: int | None = None) -> Any:
+    """Outcome labels wrap only at their "(core)" suffix; the call column wraps (to call_width) on narrow terminals."""
+    from rich import box
     from rich.table import Table
 
-    table = Table(title=f"{HEADLINE}\n{OBSERVED.format(n=m.conditions.n_calls)}", show_lines=False, expand=False)
-    table.add_column("test call", style="bold", no_wrap=True)
-    for name in m.columns:
-        table.add_column(column_title(name), no_wrap=True)
-    for call in m.calls:
-        row = [f"{call.id} {call.subject}"]
-        for name in m.columns:
-            cell = m.cells.get((name, call.id))
-            row.append(f"[{STYLE[cell.primary]}]{cell_label(cell)}[/]" if cell else "pending")
+    table = Table(title=f"{HEADLINE}\n{OBSERVED.format(n=len(calls))}", box=box.SIMPLE_HEAD, expand=False,
+                  title_style="bold", header_style="bold", pad_edge=False)
+    table.add_column("test call", no_wrap=call_width is None, width=call_width)
+    for name in columns:
+        table.add_column(column_title(name), min_width=14, overflow="fold")
+    for call in calls:
+        row = [f"[bold]{call.id}[/] {call.subject}"]
+        for name in columns:
+            cell = cells.get((name, call.id))
+            row.append(f"[{STYLE[cell.primary]}]{cell_label(cell)}[/]" if cell else "[dim]…[/]")
         table.add_row(*row)
     return table
+
+
+def _outcome_columns_width(columns: Sequence[str]) -> int:
+    """Width the outcome columns need without splitting a word (rich's Measurement ignores min_width)."""
+    words = [max([14] + [len(word) for word in column_title(n).split()]) for n in columns]
+    return sum(words) + 3 * len(columns) + 2  # 2 padding + 1 separator per column, 2 edge characters
+
+
+def _print_table(console: Any, calls: Sequence[mx.CallInfo], columns: Sequence[str],
+                 cells: Mapping[tuple[str, str], mx.Cell]) -> None:
+    longest_call = max([len("test call")] + [len(f"{c.id} {c.subject}") for c in calls])
+    budget = console.width - _outcome_columns_width(columns)
+    call_width = None if longest_call <= budget else max(8, budget)
+    console.print(_rich_table(calls, columns, cells, call_width))
 
 
 def _plain_table(m: mx.Matrix, color: bool) -> str:
@@ -185,9 +229,46 @@ def render_terminal(m: mx.Matrix, color: bool = True, width: int = 160) -> str:
     buffer = io.StringIO()
     console = Console(file=buffer, force_terminal=color, no_color=not color, width=width)
     console.print(Panel("\n".join(conditions_lines(m)), title="drill conditions", expand=False))
-    console.print(_rich_table(m))
+    _print_table(console, m.calls, m.columns, m.cells)
     for line in _footer_lines(m):
         console.print(line, markup=False, highlight=False)
+    return buffer.getvalue()
+
+
+@dataclass(frozen=True)
+class LiveFrame:
+    """One redraw of the live view: every planned column in display order, and the cells finished so far."""
+    calls: tuple[mx.CallInfo, ...]
+    planned: tuple[str, ...]
+    cells: Mapping[tuple[str, str], mx.Cell] = field(default_factory=dict)
+    finished: Mapping[str, tuple[float, bool]] = field(default_factory=dict)  # column -> (wall seconds, stopped)
+
+
+def progress_line(frame: LiveFrame) -> str:
+    def status(name: str) -> str:
+        if name not in frame.finished:
+            return f"{short_title(name)} …"
+        wall, stopped = frame.finished[name]
+        return f"{short_title(name)} {'stopped' if stopped else '✓'} {wall:.1f}s"
+    parts = [status(name) for name in frame.planned]
+    if "stack" in frame.planned and set(frame.planned) <= set(frame.finished):
+        parts.append("cross-check of rewritten calls …")  # runs after the stack, only when something was rewritten
+    return " · ".join(parts)
+
+
+def render_live(frame: LiveFrame, color: bool = True, width: int = 160) -> str:
+    """Banner first (it is the first frame of the demo), then the filling table, then column progress."""
+    from rich.console import Console
+
+    buffer = io.StringIO()
+    console = Console(file=buffer, force_terminal=color, no_color=not color, width=width, highlight=False)
+    head, _, rest = LIVE_BANNER.partition(" · ")
+    console.print(f"[bold]{head}[/] · {rest}")
+    if frame.planned:
+        _print_table(console, frame.calls, frame.planned, frame.cells)
+        console.print(progress_line(frame), style="dim", markup=False)
+    else:
+        console.print("starting the throwaway child Hermes …", style="dim", markup=False)
     return buffer.getvalue()
 
 
@@ -254,22 +335,41 @@ def render_cell_detail(m: mx.Matrix, column: str, call_id: str) -> str:
 # File: proving_ground/report.py  (part 3 of 3: self-contained HTML)
 
 CSS = """
-:root{--bg:#fbfaf7;--fg:#1d1d1f;--muted:#6b6b70;--line:#e3e1dc;--card:#ffffff;
+:root{color-scheme:light dark;--bg:#fbfaf7;--fg:#1d1d1f;--muted:#6b6b70;--line:#e6e3dd;--card:#ffffff;--code:#f6f4ef;
 --blocked:#0e7490;--rewrote:#a16207;--changed:#a21caf;--gated:#1d4ed8;--through:#8a8a8f;--escaped:#b91c1c;--errored:#b91c1c}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121214;--fg:#ececef;--muted:#9a9aa2;
---line:#2a2a2e;--card:#1a1a1d;--blocked:#22d3ee;--rewrote:#facc15;--changed:#e879f9;--gated:#60a5fa;--through:#8a8a8f;
---escaped:#f87171;--errored:#f87171}}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 ui-sans-serif,system-ui,-apple-system,sans-serif}
-main{max-width:1180px;margin:0 auto;padding:24px 16px}h1{font-size:22px;margin:0 0 4px}.muted{color:var(--muted)}
-.box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:16px 0}
-.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid var(--line);
-padding:8px 10px;text-align:left;white-space:nowrap}td a{text-decoration:none;font-weight:600}
-.BLOCKED{color:var(--blocked)}.REWROTE{color:var(--rewrote)}.RESULT_CHANGED{color:var(--changed)}
-.APPROVAL_GATED{color:var(--gated)}.PASSED_THROUGH,.NOT_RUN,.NOT_APPLICABLE{color:var(--through)}
-.ESCAPED{color:var(--escaped)}.ERRORED,.LOAD_FAILED{color:var(--errored)}pre.quoted{border-left:3px solid var(--muted)}
-.panel{display:none}.panel:target{display:block}pre{background:var(--bg);border:1px solid var(--line);
-border-radius:8px;padding:10px;overflow-x:auto;font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
-.add{color:var(--changed)}.del{color:var(--rewrote)}
+--line:#2a2a2e;--card:#1a1a1d;--code:#141416;--blocked:#22d3ee;--rewrote:#facc15;--changed:#e879f9;--gated:#60a5fa;
+--through:#8a8a8f;--escaped:#f87171;--errored:#f87171}}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1180px;margin:0 auto;padding:32px 16px 48px}a{color:var(--gated)}
+h1{font-size:clamp(19px,4.8vw,26px);line-height:1.25;letter-spacing:-.01em;margin:0 0 6px}.muted{color:var(--muted)}
+h3{font-size:13px;font-weight:600;color:var(--muted);margin:18px 0 6px}.panel h3:first-child{margin-top:0}
+.box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:16px 0}
+.box ul{margin:8px 0 0;padding-left:18px}.box li{margin:3px 0;overflow-wrap:anywhere}
+main>div:first-of-type{font-size:13.5px}.scroll{overflow-x:auto;padding:6px 8px}
+table{border-collapse:separate;border-spacing:0;width:100%}th,td{border-bottom:1px solid var(--line);padding:9px 10px;
+text-align:left;white-space:nowrap;vertical-align:top}tbody tr:last-child>*{border-bottom:0}
+thead th{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+tbody th{font-weight:600;white-space:normal;min-width:150px}tbody th .muted{display:block;font-weight:400;font-size:13px}
+th:first-child{position:sticky;left:0;z-index:1;background:var(--card)}
+td a{display:inline-block;text-decoration:none;font:600 12px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;
+letter-spacing:.02em;padding:5px 8px;border-radius:6px}td a:hover{outline:1px solid currentColor}
+td a:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+.BLOCKED{color:var(--blocked);background:color-mix(in srgb,var(--blocked) 13%,transparent)}
+.REWROTE{color:var(--rewrote);background:color-mix(in srgb,var(--rewrote) 13%,transparent)}
+.RESULT_CHANGED{color:var(--changed);background:color-mix(in srgb,var(--changed) 13%,transparent)}
+.APPROVAL_GATED{color:var(--gated);background:color-mix(in srgb,var(--gated) 13%,transparent)}
+.ESCAPED{color:var(--escaped);background:color-mix(in srgb,var(--escaped) 16%,transparent)}
+.ERRORED,.LOAD_FAILED{color:var(--errored);background:color-mix(in srgb,var(--errored) 10%,transparent)}
+.PASSED_THROUGH,.NOT_RUN,.NOT_APPLICABLE{color:var(--through);font-weight:500}
+.panel{display:none;scroll-margin-top:16px}.panel:target{display:block}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:0;overflow-x:auto;
+white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}pre.quoted{border-left:3px solid var(--muted)}
+.add,.del{display:inline-block;min-width:100%}.add{color:var(--changed);background:color-mix(in srgb,var(--changed) 11%,transparent)}
+.del{color:var(--rewrote);background:color-mix(in srgb,var(--rewrote) 11%,transparent)}
+.panel p a{display:inline-block;margin-top:14px;text-decoration:none;font-weight:600}
+@media (max-width:480px){main{padding:20px 12px 40px}.box{padding:14px}tbody th{min-width:118px}}
 """
 
 
@@ -298,7 +398,7 @@ def _html_panel(m: mx.Matrix, column: str, call_id: str) -> str:
         body = [x[len(QUOTE_PREFIX):] for x in lines] if quote else lines
         cls = ' class="quoted"' if quote else ""
         parts.append(f"<h3>{html.escape(title)}</h3><pre{cls}>{_html_lines(body)}</pre>")
-    return "".join(parts) + '<p><a href="#matrix">back to the matrix</a></p></section>'
+    return "".join(parts) + '<p><a href="#matrix">← back to the matrix</a></p></section>'
 
 
 def render_html(m: mx.Matrix) -> str:
@@ -306,7 +406,7 @@ def render_html(m: mx.Matrix) -> str:
     rows = "".join(f"<tr><th>{html.escape(c.id)} <span class='muted'>{html.escape(c.subject)}</span></th>"
                    + "".join(_html_cell(m, n, c.id) for n in m.columns) + "</tr>" for c in m.calls)
     panels = "".join(_html_panel(m, col, cid) for (col, cid) in m.cells if col in m.observations)
-    footer = "".join(f"<li>{html.escape(x.lstrip('• '))}</li>" for x in _footer_lines(m))
+    footer = "".join(f"<li>{html.escape(x.lstrip('• '))}</li>" for x in _footer_lines(m) if x != SCOPE_NOTE)
     cond = "".join(f"<li>{html.escape(x)}</li>" for x in conditions_lines(m))
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>Proving Ground Report</title>'

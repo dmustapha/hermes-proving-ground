@@ -107,7 +107,12 @@ def assemble(drill: runner.DrillRun, infos: Sequence[matrix.CallInfo], version: 
                                unreplayable=drill.unreplayable, conditions_extra=extra)
 
 
-def run_matrix(args: argparse.Namespace, on_partial: Callable[[matrix.Matrix], None] | None = None,
+def planned_columns(subjects: Sequence[runner.PluginSource]) -> tuple[str, ...]:
+    """Display order, fixed before any column finishes: baseline, solos in load order, FULL STACK."""
+    return tuple(spec.name for spec in runner.plan_columns(runner.load_order(subjects)))
+
+
+def run_matrix(args: argparse.Namespace, on_partial: Callable[[report.LiveFrame], None] | None = None,
                platform: str | None = None) -> tuple[matrix.Matrix, str]:
     config = user_config()
     note = check_live_posture(config, platform)
@@ -118,20 +123,28 @@ def run_matrix(args: argparse.Namespace, on_partial: Callable[[matrix.Matrix], N
         runner.warm_up(settings)
     subjects, skipped = select_subjects(args, settings)
     templates = select_templates(args)
-    infos, version, started, done = call_infos(templates), runner.hermes_version(settings.hermes_bin, settings), now_iso(), []
+    infos, planned, done = call_infos(templates), planned_columns(subjects), []
+    if on_partial is not None:
+        on_partial(report.LiveFrame(tuple(infos), planned))
+    version, started = runner.hermes_version(settings.hermes_bin, settings), now_iso()
 
     def partial(column: matrix.ColumnRun) -> None:
         done.append(column)
         if on_partial is not None:
-            on_partial(matrix.build_matrix(_ordered(done), None, {}, infos, version, started, 0.0))
+            on_partial(live_frame(done, planned, infos, version, started))
 
     drill = runner.run_drill(subjects, templates, settings, partial, skipped)
     return assemble(drill, infos, version, started, runner.leftovers(settings.temp_base)), note
 
 
-def _ordered(columns: Sequence[matrix.ColumnRun]) -> list[matrix.ColumnRun]:
-    rank = {"baseline": 0, "stack": 2}
-    return sorted(columns, key=lambda c: (rank.get(c.name, 1), c.name))
+def live_frame(done: Sequence[matrix.ColumnRun], planned: Sequence[str], infos: Sequence[matrix.CallInfo],
+               version: str, started: str) -> report.LiveFrame:
+    """Columns finish out of order; the frame keeps the planned order (the baseline always reports first)."""
+    rank = {name: index for index, name in enumerate(planned)}
+    ordered = sorted(done, key=lambda c: rank.get(c.name, len(rank)))
+    part = matrix.build_matrix(ordered, None, {}, infos, version, started, 0.0)
+    return report.LiveFrame(tuple(infos), tuple(planned), part.cells,
+                            {c.name: (c.wall_s, bool(c.abort_reason)) for c in done})
 
 # File: proving_ground/cli.py  (part 2 of 2: persistence, commands, slash)
 
@@ -188,18 +201,26 @@ def expectation_lines(m: matrix.Matrix) -> list[str]:
     return lines + [f"contract: {total - len(unmet) - len(missing)} of {total} expectations met"]
 
 
+def terminal_width() -> int:
+    return shutil.get_terminal_size((160, 40)).columns
+
+
 def _live_run(args: argparse.Namespace) -> tuple[matrix.Matrix, str]:
-    color = not args.no_color and sys.stdout.isatty()
+    color, width = not args.no_color and sys.stdout.isatty(), terminal_width()
     try:
         from rich.console import Console
         from rich.live import Live
         from rich.text import Text
     except ImportError:
         return run_matrix(args)
+
+    def frame(part: report.LiveFrame) -> Text:
+        return Text.from_ansi(report.render_live(part, color, width))
+
     console = Console()
-    with Live(Text("starting the throwaway child Hermes · model: NOT CALLED"), console=console, refresh_per_second=8,
+    with Live(frame(report.LiveFrame((), ())), console=console, refresh_per_second=8,
               transient=True) as live:  # the final render is printed once by cmd_run
-        return run_matrix(args, lambda part: live.update(Text.from_ansi(report.render_terminal(part, color))))
+        return run_matrix(args, lambda part: live.update(frame(part)))
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -207,7 +228,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     m, note = _live_run(args) if not args.quiet else run_matrix(args)
     saved = save(m)
     if not args.quiet:
-        print(report.render_terminal(m, color=not args.no_color and sys.stdout.isatty()))
+        print(report.render_terminal(m, color=not args.no_color and sys.stdout.isatty(), width=terminal_width()))
     for line in ([note] if note else []) + [f"saved {saved}"] + [f"wrote {p}" for p in write_exports(m, args)]:
         print(line)
     if getattr(args, "check", False):
@@ -218,10 +239,21 @@ def cmd_run(args: argparse.Namespace) -> int:
     return exit_code_for(m, bool(getattr(args, "check", False)))
 
 
+def notable_text(m: matrix.Matrix) -> str:
+    lines = report.notable_cells(m)
+    if not lines:
+        return "every cell in the latest report is PASSED THROUGH; pick one with: hermes provingground show TC01"
+    return "\n".join(["cells with a recorded effect (detail: hermes provingground show <CALL> --column <COLUMN>)",
+                      *lines])
+
+
 def cmd_show(args: argparse.Namespace) -> int:
     m = load_latest()
+    if args.call is None:
+        print(notable_text(m))
+        return 0
     column = args.column or ("stack" if "stack" in m.columns else m.columns[-1])
-    if args.call is None or column not in m.observations or args.call not in m.observations[column]:
+    if column not in m.observations or args.call not in m.observations[column]:
         print(f"choose a call from {[c.id for c in m.calls]} and a column from {list(m.observations)}")
         return 2
     print(report.render_cell_detail(m, column, args.call))
@@ -305,8 +337,12 @@ def handle_slash(raw_args: str = "", *, platform: str = "", session_id: str = ""
     try:
         if args.action == "show":
             m = load_latest()
+            if args.call is None:
+                return notable_text(m)
             column = args.column or ("stack" if "stack" in m.columns else m.columns[-1])
-            return report.render_cell_detail(m, column, args.call or m.calls[0].id)
+            if column not in m.observations or args.call not in m.observations[column]:
+                return f"choose a call from {[c.id for c in m.calls]} and a column from {list(m.observations)}"
+            return report.render_cell_detail(m, column, args.call)
         note = check_live_posture(user_config(), platform or None)
         settings = build_settings(args)
         if not runner.is_warm(settings):
