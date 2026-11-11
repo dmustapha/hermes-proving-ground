@@ -560,3 +560,86 @@ def check_expectations(m: Matrix) -> tuple[list[tuple[str, str, tuple[str, ...],
             elif cell.primary.value not in allowed:
                 unmet.append((call.id, column, tuple(allowed), cell.primary.value))
     return unmet, missing
+
+
+# Report comparison (--compare, --since-last, `diff`): pure, over two matrices already loaded.
+
+
+@dataclass(frozen=True)
+class CellChange:
+    column: str
+    call_id: str
+    before: Cell | None  # None: the cell is not in the earlier report
+    after: Cell | None  # None: the cell is not in the later report
+
+
+@dataclass(frozen=True)
+class MatrixDiff:
+    plugins_added: tuple[str, ...] = ()
+    plugins_removed: tuple[str, ...] = ()
+    calls_added: tuple[str, ...] = ()
+    calls_removed: tuple[str, ...] = ()
+    cells: tuple[CellChange, ...] = ()
+    findings_new: tuple[Finding, ...] = ()
+    findings_resolved: tuple[Finding, ...] = ()
+
+    @property
+    def changed(self) -> bool:
+        return any((self.plugins_added, self.plugins_removed, self.calls_added, self.calls_removed, self.cells,
+                    self.findings_new, self.findings_resolved))
+
+
+def subject_plugins(m: Matrix) -> tuple[str, ...]:
+    """The plugins a drill tested: the load order given to the child plus its solo columns (N/A ones included)."""
+    solos = [c.removeprefix("solo:") for c in m.columns if c.startswith("solo:")]
+    return tuple(dict.fromkeys([*m.conditions.load_order, *solos]))
+
+
+def _cell_signature(cell: Cell) -> tuple[Any, ...]:
+    """What a reader of the matrix sees in a cell: its outcomes and its (core) and unstable marks, not its note."""
+    return tuple(sorted(o.value for o in cell.outcomes)), cell.core, cell.core_also, cell.unstable
+
+
+def _added_and_removed(before: Sequence[str], after: Sequence[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    return tuple(x for x in after if x not in set(before)), tuple(x for x in before if x not in set(after))
+
+
+def _changed_cells(old: Matrix, new: Matrix, calls: Sequence[str], skip_columns: set[str]) -> tuple[CellChange, ...]:
+    """Cells whose outcome changed, on the calls both reports ran. The column of an added or removed plugin is
+    reported once, as that plugin, not cell by cell."""
+    columns = [c for c in dict.fromkeys([*old.columns, *new.columns]) if c not in skip_columns]
+    changes = []
+    for cid in calls:
+        for column in columns:
+            before, after = old.cells.get((column, cid)), new.cells.get((column, cid))
+            if before is None and after is None:
+                continue
+            if before is None or after is None or _cell_signature(before) != _cell_signature(after):
+                changes.append(CellChange(column, cid, before, after))
+    return tuple(changes)
+
+
+def _finding_key(f: Finding) -> tuple[str, str, tuple[str, ...]]:
+    return f.kind, f.call_id, tuple(f.plugins)
+
+
+def compare(old: Matrix, new: Matrix) -> MatrixDiff:
+    """Only what changed from *old* to *new*: plugins, test calls, cell outcomes and cross-plugin findings."""
+    added, removed = _added_and_removed(subject_plugins(old), subject_plugins(new))
+    calls_added, calls_removed = _added_and_removed([c.id for c in old.calls], [c.id for c in new.calls])
+    shared_calls = [c.id for c in new.calls if c.id not in set(calls_added)]
+    skip = {f"solo:{p}" for p in (*added, *removed)}
+    old_keys, new_keys = {_finding_key(f) for f in old.findings}, {_finding_key(f) for f in new.findings}
+    return MatrixDiff(added, removed, calls_added, calls_removed, _changed_cells(old, new, shared_calls, skip),
+                      tuple(f for f in new.findings if _finding_key(f) not in old_keys),
+                      tuple(f for f in old.findings if _finding_key(f) not in new_keys))
+
+
+def quiet_row(m: Matrix, call_id: str) -> bool:
+    """--focus hides a row only when every cell in it is PASSED THROUGH (N/A cells, which never ran, do not count
+    against it); one cell with any other outcome, or a cell not filled in yet, keeps the row."""
+    row = [m.cells.get((column, call_id)) for column in m.columns]
+    if any(cell is None for cell in row):
+        return False
+    kinds = {outcome for cell in row if cell is not None for outcome in cell.outcomes}
+    return Outcome.PASSED_THROUGH in kinds and kinds <= {Outcome.PASSED_THROUGH, Outcome.NOT_APPLICABLE}

@@ -27,6 +27,9 @@ LAST_ERROR = "last-error.json"
 REPORT_MAX_BYTES = 8 * 1024 * 1024  # a saved report never exceeds this; long strings are clipped
 REPORTS_KEPT = 20  # the newest report-*.json files kept; older ones are removed on save
 CLIP_MARK = " …[clipped by PROVING GROUND: report size cap]"
+EXPORT_FIELD_MAX = 8192  # characters per string in an exported JSON report; the saved report keeps more for `show`
+EXPORT_CLIP_MARK = " …[{n} more characters clipped by PROVING GROUND: export field cap]"
+CHANGED_EXIT = 6  # --compare, --since-last, diff: at least one plugin, call, cell or finding changed
 FIXTURE_KEYS = ("fx_guard", "fx_rewriter", "fx_trimmer")
 DEBUG_ENV = "PROVINGGROUND_DEBUG"  # set it to see the Python traceback instead of the one-line error
 
@@ -192,14 +195,22 @@ def reports_dir() -> Path:
     return path
 
 
-def _clip(value: Any, limit: int) -> Any:
+def _clip(value: Any, limit: int, mark: str = CLIP_MARK) -> Any:
+    """Every string longer than *limit* is cut and marked; *mark* may name the cut length as {n}."""
     if isinstance(value, str) and len(value) > limit:
-        return value[:limit] + CLIP_MARK
+        return value[:limit] + mark.format(n=len(value) - limit)
     if isinstance(value, dict):
-        return {k: _clip(v, limit) for k, v in value.items()}
+        return {k: _clip(v, limit, mark) for k, v in value.items()}
     if isinstance(value, list):
-        return [_clip(v, limit) for v in value]
+        return [_clip(v, limit, mark) for v in value]
     return value
+
+
+def export_json(m: matrix.Matrix) -> str:
+    """The exported JSON report: each string capped at EXPORT_FIELD_MAX characters (a long raw output is the
+    only field that reaches it), so the file stays small enough to attach or paste."""
+    return json.dumps(_clip(report.matrix_to_dict(m), EXPORT_FIELD_MAX, EXPORT_CLIP_MARK), indent=2,
+                      ensure_ascii=False)
 
 
 def shareable(m: matrix.Matrix) -> matrix.Matrix:
@@ -263,21 +274,41 @@ def last_drill_failure() -> str | None:
     return f"last drill failed: {data.get('code')}: {data.get('message')} (at {data.get('at')})"
 
 
+def read_report(path: Path, what: str = "the saved report",
+                hint: str = "run a new drill to replace it") -> matrix.Matrix:
+    """A report JSON from disk; a file that is not one is a clean BAD_REPORT refusal, never a traceback."""
+    try:
+        return report.matrix_from_dict(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise safety.Refusal("BAD_REPORT", f"{what} {path.name} cannot be read ({type(exc).__name__}: "
+                             f"{str(exc)[:200]}); {hint}.") from exc
+
+
 def load_latest() -> matrix.Matrix:
     path = reports_dir() / LATEST
     if not path.is_file():
         raise safety.Refusal("NO_REPORT", "no report yet; run `hermes provingground` (or add --fixtures) first.")
-    try:
-        return report.matrix_from_dict(json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
-        raise safety.Refusal("BAD_REPORT", f"the saved report {path.name} cannot be read ({type(exc).__name__}: "
-                             f"{str(exc)[:200]}); run a new drill to replace it.") from exc
+    return read_report(path)
+
+
+def load_report_file(name: str) -> matrix.Matrix:
+    """A report named on the command line (--compare, diff): saved by a drill or exported with --json."""
+    path = Path(name)
+    if not path.is_file():
+        raise safety.Refusal("NO_REPORT", f"no report file at {name}; pass a JSON report saved by a drill or "
+                             "written with --json.")
+    return read_report(path, "the report", "pass a JSON report saved by a drill or written with --json")
+
+
+def _render_for(flag: str, focus: bool) -> Callable[[matrix.Matrix], str]:
+    return {"json_out": export_json, "markdown_out": lambda x: report.render_markdown(x, focus),
+            "html_out": lambda x: report.render_html(x, focus), "write_contract": report.render_contract}[flag]
 
 
 def write_exports(m: matrix.Matrix, args: argparse.Namespace) -> list[str]:
-    written, m = [], shareable(m)
-    for flag, render in (("json_out", lambda x: json.dumps(report.matrix_to_dict(x), indent=2, ensure_ascii=False)),
-                         ("markdown_out", report.render_markdown), ("html_out", report.render_html)):
+    written, m, focus = [], shareable(m), bool(getattr(args, "focus", False))
+    for flag in ("json_out", "markdown_out", "html_out", "write_contract"):
+        render = _render_for(flag, focus)
         target = getattr(args, flag, None)
         if not target:
             continue
@@ -341,12 +372,34 @@ def _live_run(args: argparse.Namespace) -> tuple[matrix.Matrix, str]:
         return run_matrix(args, lambda part: live.update(frame(part)))
 
 
+NO_EARLIER_REPORT = "since-last: no earlier saved report to compare with; this drill is now the saved one"
+
+
+def earlier_report(args: argparse.Namespace) -> tuple[matrix.Matrix, str] | None:
+    """The report --compare or --since-last compares against, read before the drill: a bad file is refused
+    before anything is spawned, and latest.json is read before this drill replaces it."""
+    if getattr(args, "compare", None):
+        return load_report_file(args.compare), str(args.compare)
+    if getattr(args, "since_last", False) and (reports_dir() / LATEST).is_file():
+        return load_latest(), "the last saved report"
+    return None
+
+
+def print_comparison(old: matrix.Matrix, old_name: str, new: matrix.Matrix, new_name: str) -> int:
+    """Prints only what changed; CHANGED_EXIT when anything did, 0 when nothing did."""
+    diff = matrix.compare(old, new)
+    print("\n".join(report.diff_lines(old, new, diff, old_name, new_name)))
+    return CHANGED_EXIT if diff.changed else 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     runner.install_cancellation()  # SIGINT, SIGTERM, SIGHUP: stop queued columns, kill every child
+    earlier = earlier_report(args)
     m, note = _live_run(args) if not args.quiet else run_matrix(args)
     saved = save(m)
     if not args.quiet:
-        print(report.render_terminal(m, color=not args.no_color and sys.stdout.isatty(), width=terminal_width()))
+        print(report.render_terminal(m, color=not args.no_color and sys.stdout.isatty(), width=terminal_width(),
+                                     focus=bool(getattr(args, "focus", False))))
     for line in ([note] if note else []) + [f"saved {saved}"] + [f"wrote {p}" for p in write_exports(m, args)]:
         print(line)
     if getattr(args, "check", False):
@@ -354,7 +407,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not m.columns[1:] and not getattr(args, "fixtures", False):
         print("ZERO_PLUGINS: no directory plugins besides PROVING GROUND are enabled; the baseline shows Hermes "
               "core only. Try: hermes provingground --fixtures")
-    return exit_code_for(m, bool(getattr(args, "check", False)))
+    changed = print_comparison(*earlier, shareable(m), "this drill") if earlier else 0
+    if getattr(args, "since_last", False) and earlier is None:
+        print(NO_EARLIER_REPORT)
+    return exit_code_for(m, bool(getattr(args, "check", False))) or changed
 
 
 def notable_text(m: matrix.Matrix) -> str:
@@ -416,10 +472,19 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_diff(args: argparse.Namespace) -> int:
+    """Two saved reports, no drill: prints only what changed between them."""
+    first, second = getattr(args, "call", None), getattr(args, "target", None)
+    if not first or not second:
+        raise safety.Refusal("BAD_INPUT", "diff compares two reports: hermes provingground diff A.json B.json")
+    return print_comparison(load_report_file(first), first, load_report_file(second), second)
+
+
 USAGE_EPILOG = """actions:
   run    (default) drill the directory plugins enabled in your Hermes home, or the demo stack with --fixtures
   show   the cells with an effect in the latest saved report; `show TC04 --column stack` prints one cell;
-         `show --html PATH` (or --json / --markdown) exports the saved report again
+         `show --html PATH` (or --json / --markdown / --write-contract) exports the saved report again
+  diff   `diff A.json B.json` prints only what changed between two saved reports (no drill)
   warm   prepare the isolated Hermes runtime once (network); `warm --check` only reports whether it is ready
   sweep  remove stale temporary drill roots left by an interrupted drill (only roots PROVING GROUND marked)
 
@@ -428,24 +493,48 @@ examples:
   hermes provingground --fixtures
   hermes provingground show TC04 --column stack
   hermes provingground --calls my-calls.yaml --check --json pg-report.json
+  hermes provingground --fixtures --write-contract stack.lock.yaml   # later: --calls stack.lock.yaml --check
+  hermes provingground --since-last --focus
 
 exit codes:
-  0    done (with --check: every expect: met)
+  0    done (with --check: every expect: met; with --compare, --since-last or diff: nothing changed)
   1    unexpected error (one line plus a crash log path)
   2    refused before running: posture, bad input, unknown name, failed warm-up, no or unreadable report
   3    a column stopped (timeout, abort), or `warm --check` found the cache cold
   4    a call was ESCAPED (detected after it ran; that column was stopped)
   5    --check: an expect: was not met or not evaluated, or no expect: was declared
+  6    --compare, --since-last or diff: a plugin, test call, cell outcome or finding changed
+       (3, 4 and 5 take precedence)
   130  cancelled (Ctrl-C, SIGTERM, SIGHUP); every child was stopped
 """
+
+
+def _add_report_options(subparser: argparse.ArgumentParser) -> None:
+    """Exports, views and comparisons of the matrix a drill (or `show`) produces."""
+    subparser.add_argument("--json", dest="json_out", metavar="PATH", help="also write the JSON report")
+    subparser.add_argument("--markdown", dest="markdown_out", metavar="PATH", help="also write a Markdown report")
+    subparser.add_argument("--html", dest="html_out", metavar="PATH", help="also write the HTML report")
+    subparser.add_argument("--write-contract", dest="write_contract", metavar="PATH",
+                           help="write an expect: file pinning every built-in cell to this outcome (use with "
+                                "--calls PATH --check later)")
+    subparser.add_argument("--focus", action="store_true",
+                           help="terminal and Markdown: hide rows where every cell is PASSED THROUGH; HTML: "
+                                "start with its focus toggle on")
+    since = subparser.add_mutually_exclusive_group()
+    since.add_argument("--compare", metavar="REPORT", default=None,
+                       help="after the drill, print only what changed against this saved report (exit 6 if any)")
+    since.add_argument("--since-last", dest="since_last", action="store_true",
+                       help="like --compare, against the latest saved report from before this drill")
 
 
 def setup_parser(subparser: argparse.ArgumentParser) -> None:
     subparser.formatter_class = argparse.RawDescriptionHelpFormatter
     subparser.epilog = USAGE_EPILOG
-    subparser.add_argument("action", nargs="?", default="run", choices=("run", "show", "warm", "sweep"),
+    subparser.add_argument("action", nargs="?", default="run", choices=("run", "show", "diff", "warm", "sweep"),
                            help="what to do (default: run); see actions below")
-    subparser.add_argument("call", nargs="?", default=None, help="test call id for `show`, e.g. TC04")
+    subparser.add_argument("call", nargs="?", default=None,
+                           help="test call id for `show` (e.g. TC04), or the first report for `diff`")
+    subparser.add_argument("target", nargs="?", default=None, help="the second report for `diff`")
     subparser.add_argument("--column", default=None,
                            help="column for `show`: baseline, stack, solo:<plugin> or just the plugin name")
     subparser.add_argument("--fixtures", action="store_true", help="use the bundled three-plugin demo stack")
@@ -457,17 +546,15 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
                            help="run: exit 5 unless every declared expect: is met; warm: only report cache state")
     subparser.add_argument("--jobs", type=int, default=3, help="columns run in parallel (default 3)")
     subparser.add_argument("--timeout", type=float, default=120.0, help="seconds per column before it is stopped")
-    subparser.add_argument("--json", dest="json_out", metavar="PATH", help="also write the JSON report")
-    subparser.add_argument("--markdown", dest="markdown_out", metavar="PATH", help="also write a Markdown report")
-    subparser.add_argument("--html", dest="html_out", metavar="PATH", help="also write the HTML report")
+    _add_report_options(subparser)
     subparser.add_argument("--hermes-bin", default=None, help="path to the hermes executable (default: on PATH)")
     subparser.add_argument("--no-color", action="store_true", help="plain text output")
     subparser.add_argument("--quiet", action="store_true", help="no live table; print only file paths")
     subparser.set_defaults(func=handle_cli)
 
 
-COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {"run": cmd_run, "show": cmd_show, "warm": cmd_warm,
-                                                            "sweep": cmd_sweep}
+COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {"run": cmd_run, "show": cmd_show, "diff": cmd_diff,
+                                                            "warm": cmd_warm, "sweep": cmd_sweep}
 
 
 def write_crash_log(exc: BaseException) -> Path | None:
