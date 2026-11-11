@@ -79,7 +79,7 @@ class RunnerSettings:
     warm_cache: Path
     temp_base: Path
     cell_timeout_s: float = 120.0
-    jobs: int = 3
+    jobs: int = 5
     wires: bool = False  # --all-wires: children also record the context and reply wire
     pairs: bool = False  # --pairs: pair columns for effects seen only in the full stack
     repeat: int = 1  # --repeat N: solo columns with a plugin effect run N times in all

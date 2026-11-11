@@ -277,6 +277,8 @@ def _footer_lines(m: mx.Matrix) -> list[str]:
               for col, keys in m.load_failed.items()]
     lines += [f"• cross-check of {cid} not replayed (fails the closed call grammar: {', '.join(why[:3])})"
               for cid, why in m.unreplayable]
+    lines += [f"• UNSTABLE {c.call_id} in {c.column}: its {len(c.varied)} solo runs showed {' / '.join(c.varied)}"
+              for c in m.cells.values() if c.varied]
     if m.unstable:
         lines.append(f"• unstable between two baseline runs (never reported as RESULT CHANGED): {', '.join(sorted(m.unstable))}")
     return lines + [SCOPE_NOTE, "Detail: hermes provingground show <CALL> --column <COLUMN>"]

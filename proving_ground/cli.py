@@ -29,6 +29,9 @@ REPORT_MAX_BYTES = 8 * 1024 * 1024  # a saved report never exceeds this; long st
 REPORTS_KEPT = 20  # the newest report-*.json files kept; older ones are removed on save
 CLIP_MARK = " …[clipped by PROVING GROUND: report size cap]"
 REPEAT_MAX = 5  # --repeat N: each repeated solo column runs at most this many times
+# Columns in parallel. 5 holds the whole wave after the baseline of a three-plugin drill (baseline-repeat, three solos,
+# the stack): three fixture drills each took 25.4-28.7 s at 3 and 21.2-25.0 s at 5 on the build machine, same matrix.
+DEFAULT_JOBS = 5
 DEBUG_ENV = "PROVINGGROUND_DEBUG"  # set it to see the Python traceback instead of the one-line error
 
 
@@ -47,7 +50,7 @@ def build_settings(args: argparse.Namespace) -> runner.RunnerSettings:
         raise safety.Refusal("SANDBOX_UNSUPPORTED", f"temp dir {temp_base} is not under a system temp base.")
     return runner.RunnerSettings(hermes_bin=find_hermes(getattr(args, "hermes_bin", None)), pg_source=PG_SOURCE,
                                  warm_cache=temp_base / "provingground-cache" / "installs", temp_base=temp_base,
-                                 cell_timeout_s=float(getattr(args, "timeout", 120.0)), jobs=int(getattr(args, "jobs", 3)),
+                                 cell_timeout_s=float(getattr(args, "timeout", 120.0)), jobs=int(getattr(args, "jobs", DEFAULT_JOBS)),
                                  wires=bool(getattr(args, "all_wires", False)),
                                  pairs=bool(getattr(args, "pairs", False)), repeat=repeat_count(args))
 
@@ -152,8 +155,9 @@ def repeat_note(drill: runner.DrillRun, m: matrix.Matrix) -> str:
     stopped = sum(1 for runs in drill.repeats.values() for r in runs if r.abort_reason or r.load_failed)
     unstable = sum(1 for cell in m.cells.values() if cell.varied)
     names = ", ".join(n.removeprefix("solo:") for n in drill.repeats)
+    disagree = f"{unstable} cell disagrees" if unstable == 1 else f"{unstable} cells disagree"
     return (f"{drill.repeat} solo runs each of {names} (the solo columns with a plugin effect); "
-            f"{unstable} cells disagree between runs (UNSTABLE)"
+            f"{disagree} between runs (UNSTABLE)"
             + (f"; {stopped} repeat runs stopped and were not compared" if stopped else ""))
 
 
@@ -536,7 +540,8 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
     subparser.add_argument("--from", dest="warm_from", default=None, metavar="DIR",
                            help="warm: copy the runtime from an existing Hermes installs dir (e.g. ~/.hermes/installs, "
                                 "only read) instead of downloading it")
-    subparser.add_argument("--jobs", type=int, default=3, help="columns run in parallel (default 3)")
+    subparser.add_argument("--jobs", type=int, default=DEFAULT_JOBS,
+                           help=f"columns run in parallel (default {DEFAULT_JOBS})")
     subparser.add_argument("--timeout", type=float, default=120.0, help="seconds per column before it is stopped")
     subparser.add_argument("--json", dest="json_out", metavar="PATH", help="also write the JSON report")
     subparser.add_argument("--markdown", dest="markdown_out", metavar="PATH", help="also write a Markdown report")
@@ -592,7 +597,7 @@ def _slash_args(raw: str) -> argparse.Namespace:
     return argparse.Namespace(action="show" if show else "run", fixtures="fixtures" in words,
                               call=words[1] if show and len(words) > 1 else None,
                               column=words[2] if show and len(words) > 2 else None, without=None, only=None,
-                              jobs=3, timeout=120.0, hermes_bin=None, json_out=None, markdown_out=None,
+                              jobs=DEFAULT_JOBS, timeout=120.0, hermes_bin=None, json_out=None, markdown_out=None,
                               html_out=None, no_color=True, quiet=True, calls=None, check=False)
 
 

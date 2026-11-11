@@ -76,7 +76,9 @@ def test_repeat_marks_a_stateful_plugins_disagreeing_solo_runs_unstable(tmp_path
     cell = m.cell("solo:fx_flaky", "TC01")
     assert cell.primary is Outcome.BLOCKED and cell.varied == ("BLOCKED", "PASSED THROUGH")
     assert (tmp_path / "visits").read_text(encoding="utf-8") == "2"
-    assert "1 cells disagree" in m.options["repeat"]
+    assert "1 cell disagrees" in m.options["repeat"]
+    assert "UNSTABLE TC01 in solo:fx_flaky: its 2 solo runs showed BLOCKED / PASSED THROUGH" in \
+        cli.report.render_terminal(m, color=False)
 
 
 @pytest.mark.hermes

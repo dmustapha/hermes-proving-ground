@@ -215,7 +215,7 @@ def test_repeat_and_pair_notes_never_grade() -> None:
                             pair_total=3, pair_note="3 pair columns run for 1 effect seen only in the full stack")
     m = guard_matrix([{}])
     options = cli.drill_options(drill, infos(), m)
-    assert options["repeat"].startswith("2 solo runs each of fx_guard") and "1 cells disagree" in options["repeat"]
+    assert options["repeat"].startswith("2 solo runs each of fx_guard") and "1 cell disagrees" in options["repeat"]
     assert report.forbidden_claims("\n".join(options.values())) == []
     quiet = runner.DrillRun([], None, {}, [], [], "", 0.0, repeat=2)
     assert "none was run again" in cli.drill_options(quiet, infos(), m)["repeat"]
