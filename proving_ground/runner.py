@@ -196,6 +196,21 @@ def child_env(base: Mapping[str, str], root: Path, token: str, *, network: bool 
     return env
 
 
+def wire_probe_text() -> dict[str, str]:
+    """testcalls.yaml's wire_probe: synthetic text the scripted turn carries so reply and user-turn plugins act."""
+    return testcalls.load_wire_probe()
+
+
+def drill_prompt(probe: Mapping[str, str]) -> str:
+    """The child's user turn: the drill instruction, then the user-turn probe text."""
+    return " ".join(filter(None, (DRILL_PROMPT, probe.get("user_turn"))))
+
+
+def final_reply(probe: Mapping[str, str]) -> str:
+    """The scripted final reply: the done sentinel first (the drill recognizes it), then the reply probe text."""
+    return " ".join(filter(None, (injector.DONE_SENTINEL, probe.get("reply"))))
+
+
 VERIFY_NUDGE_ROUNDS = 3  # Hermes stops asking pre_verify after three continue nudges (agent/turn_stop_gates.py:53-76)
 
 
@@ -204,10 +219,10 @@ def max_turns(n_calls: int) -> int:
     return n_calls + 2 + VERIFY_NUDGE_ROUNDS
 
 
-def child_argv(launch: Path | Sequence[str], n_calls: int) -> list[str]:
+def child_argv(launch: Path | Sequence[str], n_calls: int, prompt: str = DRILL_PROMPT) -> list[str]:
     """`launch` is the hermes executable or the resolved interpreter prefix (launch_prefix)."""
     prefix = [str(launch)] if isinstance(launch, (str, Path)) else [str(a) for a in launch]
-    return [*prefix, "chat", "-q", DRILL_PROMPT, "-Q", "-t", safety.CHILD_TOOLSETS,
+    return [*prefix, "chat", "-q", prompt, "-Q", "-t", safety.CHILD_TOOLSETS,
             "--provider", "custom", "--base-url", DEAD_PROVIDER_URL, "-m", safety.SCRIPTED_MODEL,
             "--max-turns", str(max_turns(n_calls))]
 
@@ -344,7 +359,7 @@ def build_child_home(root: Path, spec: ColumnSpec, settings: RunnerSettings,
     state.mkdir(parents=True, exist_ok=True)
     (state / safety.TOKEN_FILENAME).write_text(token, encoding="utf-8")
     plan: dict[str, Any] = {"sandbox": str(root / "sandbox"), "subjects": [s.key for s in spec.plugins], "pg_key": pg_key,
-                            "calls": [c.as_plan() for c in calls]}
+                            "calls": [c.as_plan() for c in calls], "final_reply": final_reply(wire_probe_text())}
     if settings.wires:
         plan["wires"] = wire_spec(settings)
     (state / safety.PLAN_FILENAME).write_text(json.dumps(plan), encoding="utf-8")
@@ -353,7 +368,8 @@ def build_child_home(root: Path, spec: ColumnSpec, settings: RunnerSettings,
 
 def wire_spec(settings: RunnerSettings) -> dict[str, str] | None:
     """What the scripted turn sends and replies, for the context and reply wire; None without --all-wires."""
-    return {"prompt": DRILL_PROMPT, "reply": injector.DONE_SENTINEL} if settings.wires else None
+    probe = wire_probe_text()
+    return {"prompt": drill_prompt(probe), "reply": final_reply(probe)} if settings.wires else None
 
 
 def seed_sandbox(sandbox: Path, calls: Sequence[testcalls.DrillCall]) -> None:
@@ -493,7 +509,7 @@ def spawn_and_watch(root: Path, n_calls: int, settings: RunnerSettings, token: s
         raise Cancelled("cancelled before spawn")
     events_path = root / "home" / safety.STATE_DIRNAME / safety.EVENTS_FILENAME
     with (root / "child.log").open("wb") as log:
-        proc = subprocess.Popen(child_argv(launch_prefix(settings), n_calls),
+        proc = subprocess.Popen(child_argv(launch_prefix(settings), n_calls, drill_prompt(wire_probe_text())),
                                 env=child_env(os.environ, root, token, network=network),
                                 cwd=root / "sandbox", stdin=subprocess.DEVNULL, stdout=log,
                                 stderr=subprocess.STDOUT, start_new_session=True)

@@ -161,9 +161,9 @@ calls:
     purpose: "Asks to add one synthetic memory note. Block-only: shows plugins that guard memory writes; nothing is stored."
     expect_baseline: NOT_EXECUTED
     args: {target: memory, operations: [{action: add, content: "PG_PROBE_MARKER {CALL_ID} synthetic note"}]}
-# Reply and user-turn probe text (--all-wires). Synthetic and reserved values only: example.com mail, a 555-01xx
+# Reply and user-turn probe text, in every drill's scripted turn. Synthetic and reserved values only: example.com mail, a 555-01xx
 # fictional phone number, the 10.5555 test DOI prefix, CJK and Cyrillic sample text, and one repeated token. See
-# testcalls.load_wire_probe; the scripted prompt and final reply carry it once the injector integration lands.
+# testcalls.load_wire_probe; every drill appends user_turn to the prompt and reply to the scripted final reply.
 wire_probe:
   user_turn: "Synthetic profile for a wiring test: Jane Q. Example, jane.example@example.com, +1-202-555-0143, account PG-000-0000."
   reply: "PROVINGGROUND synthetic reply. Cited: doi:10.5555/pg.synthetic.0001 and arXiv:0000.00000. 你好，世界。こんにちは。Привет, мир. Contact jane.example@example.com. PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT"

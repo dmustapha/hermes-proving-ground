@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from proving_ground import runner
+from proving_ground import injector, runner, testcalls
 
 
 def test_env_is_an_allow_list_without_yolo_or_secrets(tmp_path: Path) -> None:
@@ -66,3 +66,12 @@ def test_foreign_or_symlinked_cache_is_refused(tmp_path: Path) -> None:
 
 def test_approvals_line_is_derived_from_the_child_config() -> None:
     assert runner.approvals_summary().startswith("mode manual, single_query_mode deny, cron_mode deny")
+
+
+def test_every_drill_carries_the_wire_probe_text_in_its_prompt_and_final_reply() -> None:
+    probe = testcalls.load_wire_probe()
+    prompt = runner.drill_prompt(probe)
+    argv = runner.child_argv(Path("/usr/local/bin/hermes"), 10, prompt)
+    assert argv[argv.index("-q") + 1] == f"{runner.DRILL_PROMPT} {probe['user_turn']}"
+    assert runner.final_reply(probe) == f"{injector.DONE_SENTINEL} {probe['reply']}"
+    assert runner.drill_prompt({}) == runner.DRILL_PROMPT and runner.final_reply({}) == injector.DONE_SENTINEL

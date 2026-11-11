@@ -107,3 +107,12 @@ def test_every_final_reply_logs_the_user_message_it_answers(tmp_path: Path, monk
                                      {"role": "user", "content": nudge}]}, next_call=never)
     events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()]
     assert [e["last_user"] for e in events if e["ev"] == "done"] == ["re-read the files you edited"]
+
+
+def test_the_final_reply_is_the_plans_scripted_reply(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(injector, "_completion", lambda body: body)
+    (tmp_path / "plan.json").write_text(json.dumps({"sandbox": str(tmp_path), "calls": [],
+                                                    "final_reply": "PROVINGGROUND DRILL_DONE probe text"}), encoding="utf-8")
+    middleware = injector.make_llm_execution(tmp_path, EventLog(tmp_path / "events.jsonl"))
+    done = middleware(request={"messages": [{"role": "user", "content": "go"}]}, next_call=never)
+    assert done["choices"][0]["message"]["content"] == "PROVINGGROUND DRILL_DONE probe text"

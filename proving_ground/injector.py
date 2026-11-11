@@ -131,7 +131,7 @@ def scripted_reply(request: Any, state_dir: Path, log: EventLog,
         log.write("llm_context", step=done, **context_view(request, messages))
     if done == 0:
         _first_step(plan, log, step)
-    body = tool_call_body(done, calls[done]) if done < len(calls) else final_body(DONE_SENTINEL)
+    body = tool_call_body(done, calls[done]) if done < len(calls) else final_body(str(plan.get("final_reply") or DONE_SENTINEL))
     if done >= len(calls):
         log.write("done", steps=done, last_user=clip_text(last_user_text(messages)))
     if step.ledger is not None:

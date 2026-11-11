@@ -46,6 +46,9 @@ def test_all_wires_sees_added_context_and_a_rewritten_reply(wire_matrix) -> None
     kinds = {(a.call_id, a.kind, a.plugins) for a in m.attributions}
     assert {(CONTEXT_ID, "solo-match", ("fx_context",)), (REPLY_ID, "solo-match", ("fx_replier",))} <= kinds
     assert m.conditions.n_calls == 2 and "wires" in m.options
+    probe = testcalls.load_wire_probe()  # every drill's scripted turn carries the wire probe text
+    assert probe["reply"] in str(m.observations["baseline"][REPLY_ID].delivered)
+    assert probe["user_turn"] in str(m.observations["baseline"][CONTEXT_ID].injected_args.get("prompt"))
 
 
 @pytest.mark.hermes
