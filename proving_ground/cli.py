@@ -166,15 +166,16 @@ WARM_UP_NEEDED = ("WARM_UP_NEEDED: run `hermes provingground warm` in a terminal
 
 
 def local_installs() -> Path | None:
-    """The installs dir of your own Hermes home (the runtime Hermes already downloaded), when there is one."""
+    """The runtime Hermes already downloaded: the installs dir of the current Hermes home, else of ~/.hermes (a
+    profile or a custom HERMES_HOME may have none of its own). Only ever read."""
+    homes = [Path.home() / ".hermes"]
     try:
         from hermes_constants import get_hermes_home
 
-        home = Path(get_hermes_home())
-    except Exception:  # a Hermes without hermes_constants: its default home
-        home = Path.home() / ".hermes"
-    installs = home / "installs"
-    return installs if installs.is_dir() else None
+        homes.insert(0, Path(get_hermes_home()))
+    except Exception:  # a Hermes without hermes_constants: only its default home
+        pass
+    return next((home / "installs" for home in homes if (home / "installs").is_dir()), None)
 
 
 def warm_from_local(settings: runner.RunnerSettings) -> bool:
