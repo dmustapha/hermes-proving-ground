@@ -122,7 +122,7 @@ class Recorder:
             return list(self.entries)
 
     def for_column(self, token: str) -> list[str]:
-        """Only this column's hits: entries are `<column-token>/<CALL_ID>` (ARCH-F8, PRD-F6)."""
+        """Only this column's recorded requests: entries are `<column-token>/<CALL_ID>` (ARCH-F8, PRD-F6)."""
         prefix = token + "/"
         return [e[len(prefix):] for e in self.snapshot() if e.startswith(prefix)]
 
