@@ -303,6 +303,9 @@ def run_matrix(args: argparse.Namespace, on_partial: Callable[[report.LiveFrame]
     settings = build_settings(args)
     runner.sweep_stale_roots(settings.temp_base)
     subjects, skipped = select_subjects(args, settings)
+    if getattr(args, "pairs", False) and len(subjects) < 2:
+        raise safety.Refusal("BAD_OPTION", f"--pairs needs at least 2 plugins to pair; this drill has "
+                             f"{len(subjects)}.")
     templates = select_templates(args)
     ensure_warm(settings, allow_download=getattr(args, "download_ok", True))
     infos, planned, done = all_infos(templates, settings), planned_columns(subjects), []
@@ -569,7 +572,27 @@ def run_attended_column(args: argparse.Namespace, asked: Sequence[testcalls.Call
     return attended.exit_code(run)
 
 
+def check_export_targets(args: argparse.Namespace) -> None:
+    """Before any drill: every export path is a file path whose nearest existing parent is a writable directory,
+    so a bad path is refused in a second instead of after the whole drill."""
+    for flag in ("json_out", "markdown_out", "html_out", "write_contract"):
+        target = getattr(args, flag, None)
+        if target:
+            _check_export_target(Path(target), OPTION_FLAGS.get(flag, "--write-contract"))
+
+
+def _check_export_target(target: Path, flag: str) -> None:
+    if target.is_dir():
+        raise safety.Refusal("BAD_OPTION", f"{flag} {target} is a directory; pass a file path.")
+    parent = target.absolute().parent
+    while not parent.exists() and parent != parent.parent:
+        parent = parent.parent
+    if not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK):
+        raise safety.Refusal("BAD_OPTION", f"{flag} {target}: {parent} is not a writable directory.")
+
+
 def cmd_run(args: argparse.Namespace) -> int:
+    check_export_targets(args)
     asked = check_attended_posture(args) if getattr(args, "attended", False) else None
     runner.install_cancellation()  # SIGINT, SIGTERM, SIGHUP: stop queued columns, kill every child
     earlier = earlier_report(args)
@@ -660,6 +683,8 @@ def cmd_warm(args: argparse.Namespace) -> int:
 
 def warm_from(settings: runner.RunnerSettings, source: Path) -> int:
     """Offline warm-up: copy an existing Hermes installs dir into the private cache (the source is only read)."""
+    if not source.is_dir():
+        raise safety.Refusal("SEED_UNSUPPORTED", f"--from {source} is not a directory; pass a Hermes installs dir.")
     if runner.is_warm(settings):
         print(f"warm: runtime cache {settings.warm_cache} is already ready; nothing copied")
         return 0
@@ -672,9 +697,39 @@ def warm_from(settings: runner.RunnerSettings, source: Path) -> int:
     return 0
 
 
+DRILL_ACTIONS = ("run", "lock")
+EXPORT_ACTIONS = ("run", "lock", "show")
+# Options (by argparse dest) that only mean something to some actions; anywhere else they are refused, so a flag is
+# never silently ignored. "call" and "target" are the positional arguments after the action.
+OPTION_ACTIONS: dict[str, tuple[str, ...]] = {
+    "fixtures": DRILL_ACTIONS, "extended": DRILL_ACTIONS, "without": DRILL_ACTIONS, "only": DRILL_ACTIONS,
+    "calls": DRILL_ACTIONS, "check": ("run", "lock", "warm"), "compare": DRILL_ACTIONS, "since_last": DRILL_ACTIONS,
+    "all_wires": DRILL_ACTIONS, "pairs": DRILL_ACTIONS, "repeat": DRILL_ACTIONS, "column": ("show",),
+    "plugins": ("show",), "json_out": EXPORT_ACTIONS, "markdown_out": EXPORT_ACTIONS, "html_out": EXPORT_ACTIONS,
+    "write_contract": EXPORT_ACTIONS, "focus": EXPORT_ACTIONS, "call": ("show", "lock", "diff"), "target": ("diff",)}
+OPTION_FLAGS = {"json_out": "--json", "markdown_out": "--markdown", "html_out": "--html", "call": "an extra argument",
+                "target": "a second extra argument"}
+
+
+def _option_default(dest: str) -> Any:
+    return {"repeat": 1}.get(dest, None)
+
+
+def refuse_options_outside_their_action(args: argparse.Namespace, action: str) -> None:
+    for dest, actions in OPTION_ACTIONS.items():
+        value = getattr(args, dest, None)
+        if action in actions or value in (None, False, _option_default(dest)):
+            continue
+        flag = OPTION_FLAGS.get(dest, "--" + dest.replace("_", "-"))
+        raise safety.Refusal("BAD_OPTION", f"{flag} is not used by `{action}` (it is for: {', '.join(actions)}); "
+                             "see hermes provingground --help.")
+
+
 def refuse_misplaced_options(args: argparse.Namespace) -> None:
-    """--from and --status belong to warm only, and not together (--status never copies anything)."""
+    """Every option belongs to some actions (OPTION_ACTIONS); --from and --status belong to warm only, and not
+    together (--status never copies anything)."""
     action = getattr(args, "action", "run") or "run"
+    refuse_options_outside_their_action(args, action)
     if getattr(args, "attended", False) and action != "run":
         raise safety.Refusal("BAD_OPTION", "--attended is for a drill run only: hermes provingground --attended.")
     if getattr(args, "status", False) and action != "warm":
@@ -688,7 +743,9 @@ def refuse_misplaced_options(args: argparse.Namespace) -> None:
 
 
 def cmd_sweep(args: argparse.Namespace) -> int:
-    removed = runner.sweep_stale_roots(build_settings(args).temp_base)
+    removed, stopped = runner.sweep_stale(build_settings(args).temp_base)
+    if stopped:
+        print(f"stopped {len(stopped)} orphaned drill processes")
     print(f"removed {len(removed)} stale sandbox roots")
     return 0
 
@@ -736,7 +793,8 @@ examples:
   hermes provingground --compare latest --focus
 
 user calls (--calls): a closed grammar: echo/printf whose first word is not a flag (later words are printed),
-  seq without flags, curl -q to the run's recorder, chmod with an octal mode on sandbox paths; no | ; & $ .. ~
+  seq without flags (<= 20000 lines), curl -q to the run's recorder, chmod MODE (3 octal digits, owner rw) on
+  sandbox paths below its root; no | ; & $ .. ~, no printf %n or width over 9999, only the tool's own arg names
 
 also accepted: --jobs N, --timeout SECONDS, --hermes-bin PATH, --quiet, --no-color (NO_COLOR is honoured)
 

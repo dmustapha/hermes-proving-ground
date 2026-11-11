@@ -188,8 +188,20 @@ def test_warm_from_on_a_warm_cache_copies_nothing(monkeypatch, capsys, tmp_path:
     runner.ensure_private_cache(settings.warm_cache)
     (settings.warm_cache / runner.WARM_MARKER).write_text("1", encoding="utf-8")
     monkeypatch.setattr(seed, "seed_cache", lambda *_a, **_k: pytest.fail("must not copy"))
+    (tmp_path / "src").mkdir()
     assert cli.warm_from(settings, tmp_path / "src") == 0
     assert "already ready; nothing copied" in capsys.readouterr().out
+
+
+def test_warm_from_a_missing_dir_is_refused_even_on_a_warm_cache(monkeypatch, capsys, tmp_path: Path) -> None:
+    settings = settings_in(tmp_path)
+    runner.ensure_private_cache(settings.warm_cache)
+    (settings.warm_cache / runner.WARM_MARKER).write_text("1", encoding="utf-8")
+    monkeypatch.setattr(seed, "seed_cache", lambda *_a, **_k: pytest.fail("must not copy"))
+    with pytest.raises(safety.Refusal) as refused:
+        cli.warm_from(settings, tmp_path / "missing")
+    assert refused.value.code == "SEED_UNSUPPORTED" and "not a directory" in refused.value.message
+    assert "already ready" not in capsys.readouterr().out
 
 
 REAL_INSTALLS = Path.home() / ".hermes" / "installs"

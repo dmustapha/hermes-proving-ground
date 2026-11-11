@@ -233,17 +233,42 @@ def create_drill_root(temp_base: Path) -> Path:
     """A new marked root; if marking or populating it fails, it is removed (an unmarked root is never swept)."""
     root = Path(tempfile.mkdtemp(prefix=safety.ROOT_PREFIX, dir=temp_base)).resolve()
     try:
-        safety.write_owner_marker(root, os.getpid(), time.time())
+        created = time.time()
+        safety.write_owner_record(root, os.getpid(), created)
+        safety.write_owner_marker(root, os.getpid(), created)
         with _LIVE_LOCK:
             _LIVE_ROOTS.add(root)
         for sub in ROOT_SUBDIRS:
             (root / sub).mkdir(parents=True, exist_ok=True)
     except BaseException:
-        shutil.rmtree(root, ignore_errors=True)
+        remove_root(root)
         with _LIVE_LOCK:
             _LIVE_ROOTS.discard(root)
         raise
     return root
+
+
+def _restore_owner_access(root: Path) -> None:
+    """Give the owner rwx on every directory again (a call may have chmodded one to 000), so rmtree can empty it."""
+    for dirpath, dirnames, _files in os.walk(root):
+        for name in [""] + dirnames if dirpath == str(root) else dirnames:
+            path = os.path.join(dirpath, name)
+            try:
+                if not os.path.islink(path):
+                    os.chmod(path, stat.S_IMODE(os.lstat(path).st_mode) | stat.S_IRWXU)
+            except OSError:
+                continue
+
+
+def remove_root(root: Path) -> None:
+    """Remove a drill root and its owner sidecar; never raises."""
+    if root.is_dir() and not root.is_symlink():
+        _restore_owner_access(root)
+    shutil.rmtree(root, ignore_errors=True)
+    try:
+        safety.owner_record_path(root).unlink()
+    except OSError:
+        pass
 
 
 def ensure_private_dir(path: Path, what: str) -> None:
@@ -458,7 +483,7 @@ def cancel_everything(*_signal_args: Any) -> int:
         _CLEANED.add(proc.pid)
     for root in roots:
         _CLEANED.update(kill_home_processes(root / "home"))
-        shutil.rmtree(root, ignore_errors=True)
+        remove_root(root)
         with _LIVE_LOCK:
             _LIVE_ROOTS.discard(root)
     return len(_CLEANED)
@@ -517,6 +542,10 @@ def spawn_and_watch(root: Path, n_calls: int, settings: RunnerSettings, token: s
                                 stderr=subprocess.STDOUT, start_new_session=True)
         with _LIVE_LOCK:
             _LIVE_PROCS[proc.pid] = proc
+        try:
+            safety.record_child_pid(root, proc.pid)
+        except OSError:
+            pass
         try:
             return _watch(proc, events_path, settings, root / "child.log")
         finally:
@@ -638,7 +667,7 @@ def _cleanup_root(root: Path, spec: ColumnSpec, temp_base: Path) -> None:
         _keep_logs(root, spec, temp_base)
         kill_home_processes(root / "home")
     finally:
-        shutil.rmtree(root, ignore_errors=True)
+        remove_root(root)
         with _LIVE_LOCK:
             _LIVE_ROOTS.discard(root)
 
@@ -674,23 +703,67 @@ def run_column(spec: ColumnSpec, templates: Sequence[testcalls.CallTemplate], ca
         _cleanup_root(root, spec, settings.temp_base)
 
 
-def sweep_stale_roots(temp_base: Path, max_age_s: float | None = None) -> list[Path]:
-    """Remove only roots PG provably created (exact name + parseable marker) whose creator pid is dead."""
+SWEEP_PASSES = 3  # a daemon that was mid-start during the first kill can recreate the root; sweep it again
+
+
+def _root_owner(root: Path) -> tuple[int, float] | None:
+    marker = safety.read_owner_marker(root)
+    record = safety.read_owner_record(root)
+    return marker or (record[:2] if record else None)
+
+
+def _is_stale(root: Path, max_age_s: float | None) -> bool:
+    """PG provably made this root (marker or sidecar) and its owner is dead or too old, or it has no owner proof
+    but a live process's environment names HERMES_HOME=<root>/home exactly: a daemon that recreated it."""
+    owner = _root_owner(root)
+    if owner is None:
+        return any(names_home(text, root.resolve() / "home") for text in _ps_env_table().values())
+    pid, created = owner
+    too_old = max_age_s is not None and time.time() - created > max_age_s
+    return pid != os.getpid() and (not safety.pid_alive(pid) or too_old)
+
+
+def _sweep_candidates(temp_base: Path) -> list[Path]:
+    """Root dirs with the exact mkdtemp name, plus the roots named by owner sidecars (the root may be gone)."""
+    roots = {r for r in temp_base.glob(safety.ROOT_PREFIX + "*")
+             if safety.ROOT_NAME.match(r.name) and r.is_dir() and not r.is_symlink()}
+    for record in temp_base.glob(safety.ROOT_PREFIX + "*" + safety.OWNER_RECORD_SUFFIX):
+        name = record.name[:-len(safety.OWNER_RECORD_SUFFIX)]
+        if safety.ROOT_NAME.match(name) and not (temp_base / name).is_symlink():
+            roots.add(temp_base / name)
+    return sorted(roots)
+
+
+def _sweep_root(root: Path) -> list[int]:
+    """Stop every process whose environment names this root's home, remove it, and repeat while a daemon that
+    escaped the first scan recreates it."""
+    stopped: list[int] = []
+    for _ in range(SWEEP_PASSES):
+        stopped += kill_home_processes(root.resolve() / "home")
+        remove_root(root)
+        if not root.exists():
+            break
+    return stopped
+
+
+def sweep_stale(temp_base: Path, max_age_s: float | None = None) -> tuple[list[Path], list[int]]:
+    """(roots removed, processes stopped). Only roots PG provably created (exact name and a marker or sidecar
+    whose creator pid is dead), or unproven roots kept alive by a live drill process whose environment names them."""
     removed: list[Path] = []
-    for root in sorted(temp_base.glob(safety.ROOT_PREFIX + "*")):
-        if root.is_symlink() or not root.is_dir() or not safety.ROOT_NAME.match(root.name):
+    stopped: list[int] = []
+    for root in _sweep_candidates(temp_base):
+        if not _is_stale(root, max_age_s):
             continue
-        marker = safety.read_owner_marker(root)
-        if marker is None:
-            continue
-        pid, created = marker
-        too_old = max_age_s is not None and time.time() - created > max_age_s
-        if pid == os.getpid() or (safety.pid_alive(pid) and not too_old):
-            continue
-        kill_home_processes(root.resolve() / "home")
-        shutil.rmtree(root, ignore_errors=True)
-        removed.append(root)
-    return removed
+        existed = root.is_dir()
+        stopped += _sweep_root(root)
+        if existed:
+            removed.append(root)
+    return removed, sorted(set(stopped))
+
+
+def sweep_stale_roots(temp_base: Path, max_age_s: float | None = None) -> list[Path]:
+    """Remove only roots PG provably created whose creator pid is dead (see sweep_stale)."""
+    return sweep_stale(temp_base, max_age_s)[0]
 
 
 def drill_home_in(text: str, temp_base: Path) -> Path | None:

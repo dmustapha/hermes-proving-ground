@@ -35,6 +35,7 @@ CHILD_TOOLSETS = ",".join(["terminal", "file", *sorted(set(PROBE_TOOLSETS.values
 ALLOWED_ABSOLUTE_PATHS = frozenset({"/dev/null"})
 ALLOWED_HOSTS = frozenset({"127.0.0.1"})
 INTERACTIVE_PLATFORMS = frozenset({"cli", "tui", "local", "desktop"})
+HERMES_APPROVAL_MODES = ("manual", "smart", "off")  # tools/approval_context.py:263 _VALID_MODES
 TRUTHY = frozenset({"1", "true", "yes", "on"})
 NETWORK_PROGRAMS = frozenset({"curl", "wget", "nc", "ncat", "netcat", "telnet", "ssh", "scp", "sftp", "rsync",
                               "ftp", "socat", "http", "https"})
@@ -46,12 +47,22 @@ CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")  # a newline or CR is a secon
 _DERIVED_FORBIDDEN = re.compile(r"[$`;&|<>\\()*?!\[\]\x00-\x1f\x7f]|\.\.|file:|~")
 # Per-program flag allow-list: option words outside it can pull in unchecked input (`curl -K cfg`).
 # curl must start with -q (ignore every .curlrc), may carry -s and one `-o <sandbox path>`, and exactly one URL, the
-# run's own recorder. chmod takes an octal mode and sandbox paths. seq takes no flags. echo and printf print every word
+# run's own recorder. chmod takes a 3-digit octal mode and sandbox paths. seq takes no flags. echo and printf print every word
 # after their first argument literally (bash's echo and printf parse options only before the first other word), so a
 # flag-like word such as `--force` is allowed there; their first argument must not start with `-` (`echo -e`,
 # `printf -v` would be options, not text).
 CURL_NO_RC = "-q"
-_OCTAL_MODE = re.compile(r"^[0-7]{3,4}$")
+# Three octal digits (a leading 0 is allowed; no setuid, setgid or sticky digit), and the owner keeps read and write.
+_OCTAL_MODE = re.compile(r"^0?[67][0-7]{2}$")
+# Output bounds for derived calls: a printf width or precision above PRINTF_FIELD_MAX, or %n, is refused; seq may
+# print at most SEQ_MAX_LINES lines (the built-in catalog's own TC02 prints 20000).
+PRINTF_FIELD_MAX = 9999
+SEQ_MAX_LINES = 20000
+_PRINTF_DIRECTIVE = re.compile(r"%[-+ #0']*(\d*)(?:\.(\d*))?([A-Za-z%]?)")
+# Argument names a derived call may carry, per tool: the fields the built-in catalog uses and nothing else, so no
+# extra keyword (terminal's `background`, `workdir`, `timeout`) can change how a tool runs the call.
+DERIVED_ARG_KEYS = {"terminal": frozenset({"command"}), "write_file": frozenset({"path", "content"}),
+                    "read_file": frozenset({"path"}), "patch": frozenset({"path", "old_string", "new_string"})}
 SECRET_NAME = re.compile(r"(?i)(^\.env(\..*)?$|\.pem$|\.key$|\.p12$|\.pfx$|^auth[^/]*\.json$|^credentials(\..*)?$|"
                          r"^id_(rsa|ed25519|ecdsa)$|^secrets?\.(json|ya?ml|toml)$)")
 SECRET_KEY = re.compile(r"(?i)(key|token|secret|password|passwd|credential)")
@@ -110,12 +121,14 @@ def is_drill_child(environ: Mapping[str, str] | None = None) -> bool:
 
 def normalize_approval_mode(value: Any) -> str:
     """Mirror Hermes's own reading (tools/approval_context.py _normalize_approval_mode): YAML 1.1 loads a bare
-    `off` as False, so False means "off"; any other bool, a missing key or an empty value means "manual"."""
+    `off` as False, so False means "off"; any other bool, a missing key or an empty value means "manual"; an
+    unknown string (yolo, none, never, auto) also means "manual" there, so only "off" turns approvals off."""
     if value is False:
         return "off"
     if value is None or isinstance(value, bool):
         return "manual"
-    return str(value).strip().lower() or "manual"
+    normalized = str(value).strip().lower()
+    return normalized if normalized in HERMES_APPROVAL_MODES else "manual"
 
 
 def check_posture(environ: Mapping[str, str], approvals_mode: Any, platform: str | None, in_cron: bool) -> None:
@@ -232,10 +245,55 @@ def _curl_reasons(args: list[str], recorder_url: str, box: Path) -> list[str]:
     return found + (["grammar:curl:more-than-one-o"] if outputs > 1 else [])
 
 
+def _chmod_target_ok(path: str, box: Path) -> bool:
+    """A sandbox path below the sandbox root: chmod on the root itself could stop teardown removing it."""
+    if not (path.startswith("/") and _inside(Path(path), box)):
+        return False
+    try:
+        return Path(path).resolve() != box
+    except (OSError, RuntimeError):
+        return False
+
+
 def _chmod_reasons(args: list[str], box: Path) -> list[str]:
     if len(args) < 2 or not _OCTAL_MODE.match(args[0]):
         return [f"grammar:chmod:mode:{(args[0] if args else 'none')[:40]}"]
-    return [f"grammar:chmod:path:{p[:40]}" for p in args[1:] if not (p.startswith("/") and _inside(Path(p), box))]
+    return [f"grammar:chmod:path:{p[:40]}" for p in args[1:] if not _chmod_target_ok(p, box)]
+
+
+def _printf_reasons(fmt: str) -> list[str]:
+    found = []
+    for width, precision, conversion in _PRINTF_DIRECTIVE.findall(fmt):
+        if conversion == "n":
+            found.append("grammar:printf:%n")
+        if any(field and int(field) > PRINTF_FIELD_MAX for field in (width, precision)):
+            found.append(f"grammar:printf:field-over-{PRINTF_FIELD_MAX}")
+    return found
+
+
+def _seq_lines(args: list[str]) -> float | None:
+    """How many lines `seq` would print for these operands; None when they are not 1 to 3 plain numbers."""
+    try:
+        numbers = [float(word) for word in args]
+    except ValueError:
+        return None
+    if not 1 <= len(numbers) <= 3 or any(n != n or n in (float("inf"), float("-inf")) for n in numbers):
+        return None
+    first, step, last = (1.0, 1.0, numbers[0]) if len(numbers) == 1 else \
+        (numbers[0], 1.0, numbers[1]) if len(numbers) == 2 else tuple(numbers)
+    if step <= 0:
+        return None
+    return max(0.0, (last - first) / step + 1)
+
+
+def _seq_reasons(args: list[str]) -> list[str]:
+    flags = [f"grammar:flag:seq:{w[:40]}" for w in args if w.startswith("-")]
+    if flags:
+        return flags
+    lines = _seq_lines(args)
+    if lines is None:
+        return ["grammar:seq:operands"]
+    return [f"grammar:seq:over-{SEQ_MAX_LINES}-lines"] if lines > SEQ_MAX_LINES else []
 
 
 def _program_reasons(program: str, args: list[str], recorder_url: str, box: Path) -> list[str]:
@@ -244,8 +302,10 @@ def _program_reasons(program: str, args: list[str], recorder_url: str, box: Path
     if program == "chmod":
         return _chmod_reasons(args, box)
     if program in LITERAL_PRINTERS:
-        return [f"grammar:flag:{program}:{args[0][:40]}"] if args and args[0].startswith("-") else []
-    return [f"grammar:flag:{program}:{w[:40]}" for w in args if w.startswith("-")]  # seq
+        if args and args[0].startswith("-"):
+            return [f"grammar:flag:{program}:{args[0][:40]}"]
+        return _printf_reasons(args[0]) if program == "printf" and args else []
+    return _seq_reasons(args)
 
 
 def _derived_terminal_reasons(command: str, recorder_url: str, box: Path) -> list[str]:
@@ -270,13 +330,15 @@ def derived_call_reasons(tool: str, args: Mapping[str, Any], sandbox: Path, reco
     """Closed allow-list grammar for calls PG did not author itself (cross-check replays, user test calls).
     No string argument may hold a control character (\\x00-\\x1f, \\x7f). A terminal command is single-space
     separated words: `echo|printf` whose first argument is not a flag (later words are printed literally, so
-    `echo rm -rf build` is valid), `seq` with no flags, `curl -q [-s] [-o <sandbox path>] <recorder URL>`, or
-    `chmod <octal> <sandbox paths>`; no shell metacharacters, `$`, backticks, `..`, `~` or `file:`. Every path must
-    also stay in the sandbox. Anything else is never executed; the caller records it as unreplayable."""
+    `echo rm -rf build` is valid; printf refuses %n and any width or precision over PRINTF_FIELD_MAX), `seq` with
+    no flags and at most SEQ_MAX_LINES lines, `curl -q [-s] [-o <sandbox path>] <recorder URL>`, or
+    `chmod <3 octal digits, owner rw> <sandbox paths below the root>`; no shell metacharacters, `$`, backticks,
+    `..`, `~` or `file:`. Argument names are limited to DERIVED_ARG_KEYS. Every path must also stay in the sandbox. Anything else is never executed; the caller records it as unreplayable."""
     if tool not in ALLOWED_TOOLS:
         return [f"grammar:tool:{tool}"]
     box = sandbox.resolve()
     reasons = list(escape_reasons(args, sandbox)) + _control_reasons(args)
+    reasons += [f"grammar:arg-key:{str(key)[:40]}" for key in args if key not in DERIVED_ARG_KEYS[tool]]
     if tool == "terminal":
         reasons += _derived_terminal_reasons(str(args.get("command", "")), recorder_url, box)
     else:
@@ -290,6 +352,37 @@ def write_owner_marker(root: Path, pid: int, created: float) -> None:
     tmp = root / (OWNER_MARKER + ".tmp")
     tmp.write_text(f"{pid} {created:.3f}\n", encoding="utf-8")
     os.replace(tmp, root / OWNER_MARKER)
+
+
+OWNER_RECORD_SUFFIX = ".pg-owner"  # sidecar next to the root (outside it): survives the root being removed or recreated
+
+
+def owner_record_path(root: Path) -> Path:
+    return root.parent / (root.name + OWNER_RECORD_SUFFIX)
+
+
+def write_owner_record(root: Path, pid: int, created: float) -> None:
+    """The sidecar: line 1 `<owner pid> <created>`, then one line per child pid spawned for this root. The child's
+    environment names HERMES_HOME=<root>/home exactly, which is how sweep finds the daemons it starts later."""
+    path = owner_record_path(root)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(f"{pid} {created:.3f}\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def record_child_pid(root: Path, pid: int) -> None:
+    with owner_record_path(root).open("a", encoding="utf-8") as handle:
+        handle.write(f"{pid}\n")
+
+
+def read_owner_record(root: Path) -> tuple[int, float, tuple[int, ...]] | None:
+    """(owner pid, created, child pids) from a parseable sidecar, else None."""
+    try:
+        first, *rest = owner_record_path(root).read_text(encoding="utf-8").splitlines()
+        pid_text, created_text = first.split()
+        return int(pid_text), float(created_text), tuple(int(line) for line in rest if line.strip())
+    except (OSError, ValueError):
+        return None
 
 
 def read_owner_marker(root: Path) -> tuple[int, float] | None:

@@ -30,7 +30,9 @@ REQUIRED_ARGS = {"terminal": ("command",), "write_file": ("path", "content"),
                  "memory": ("target", "operations")}
 DEFAULT_CATALOG = Path(__file__).resolve().parent.parent / "testcalls.yaml"
 BUILT_IN, USER, CROSSCHECK = "built-in", "user", "crosscheck"
-USER_ID = re.compile(r"^U[A-Za-z0-9_-]{1,15}$")
+USER_ID = re.compile(r"U[A-Za-z0-9_-]{1,15}")  # matched with fullmatch: no trailing newline slips through
+CALLS_FILE_MAX_BYTES = 256 * 1024
+ARGS_MAX_NODES = 1000  # strings, numbers, lists and mappings in one call's args, counted after YAML aliases expand
 EXPECT_COLUMN = re.compile(r"^(baseline|stack|solo:[A-Za-z0-9_./-]+)$")
 
 
@@ -118,6 +120,25 @@ def _probe_from(raw: Mapping[str, Any], provenance: str) -> bool:
     return probe
 
 
+def _count_nodes(value: Any, budget: int) -> int:
+    """Nodes in *value*, stopping once *budget* is spent, so an alias bomb is counted in bounded time."""
+    count, stack = 0, [value]
+    while stack and count <= budget:
+        item = stack.pop()
+        count += 1
+        if isinstance(item, Mapping):
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    return count
+
+
+def _check_text_fields(raw: Mapping[str, Any]) -> None:
+    for name in ("subject", "purpose"):
+        if safety.CONTROL_CHARACTER.search(str(raw[name])):
+            raise TestCallError(f"{raw.get('id')!r}: {name} must be one line without control characters")
+
+
 def _template_from(raw: Any, provenance: str = BUILT_IN) -> CallTemplate:
     """One entry of a test-call file; a user file is external data, so every malformed shape is a TestCallError."""
     if not isinstance(raw, Mapping):
@@ -126,6 +147,9 @@ def _template_from(raw: Any, provenance: str = BUILT_IN) -> CallTemplate:
         baseline = raw.get("expect_baseline", "PASSED_THROUGH") if provenance == USER else raw["expect_baseline"]
         if not isinstance(raw["args"], Mapping):
             raise TestCallError(f"{raw.get('id')}: args must be a mapping")
+        if _count_nodes(raw["args"], ARGS_MAX_NODES) > ARGS_MAX_NODES:
+            raise TestCallError(f"{raw.get('id')}: args hold more than {ARGS_MAX_NODES} values")
+        _check_text_fields(raw)
         return CallTemplate(id=str(raw["id"]), tool=str(raw["tool"]), subject=str(raw["subject"]),
                             purpose=str(raw["purpose"]), expect_baseline=str(baseline),
                             args=dict(raw["args"]), seed=_seed_from(raw.get("seed"), str(raw.get("id"))),
@@ -140,7 +164,12 @@ def _template_from(raw: Any, provenance: str = BUILT_IN) -> CallTemplate:
 def _load_yaml(path: Path) -> dict[str, Any]:
     from ruamel.yaml import YAML
 
-    text = path.read_text(encoding="utf-8")
+    try:
+        if path.stat().st_size > CALLS_FILE_MAX_BYTES:
+            raise TestCallError(f"{path}: larger than {CALLS_FILE_MAX_BYTES // 1024} KB")
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise TestCallError(f"{path}: not UTF-8 text (byte {exc.start})") from exc
     try:
         data = YAML(typ="safe", pure=True).load(text) or {}
     except Exception as exc:  # ruamel's YAMLError family: the file is not valid YAML
@@ -181,7 +210,7 @@ def load_user_calls(path: Path, built_in: Sequence[CallTemplate]) -> list[CallTe
     data = _load_yaml(path)
     extra = [_template_from(raw, USER) for raw in data.get("calls") or []]
     for template in extra:
-        if not USER_ID.match(template.id):
+        if not USER_ID.fullmatch(template.id):
             raise TestCallError(f"{template.id}: user call ids start with U (e.g. U01) so they never shadow TCxx")
     contracts = data.get("expect") or {}
     if not isinstance(contracts, Mapping):
@@ -216,7 +245,7 @@ def _check_one(template: CallTemplate) -> None:
     if template.expect_baseline not in EXPECTATIONS:
         raise TestCallError(f"{template.id}: unknown expect_baseline {template.expect_baseline!r}")
     for rel in template.seed:
-        if rel.startswith("/") or ".." in Path(rel).parts:
+        if rel.startswith(("/", "~")) or ".." in Path(rel).parts:
             raise TestCallError(f"{template.id}: seed path {rel!r} must be sandbox-relative")
     words = str(template.args.get("command", "")).split(" ") if template.tool == "terminal" else []
     if words[:1] == ["curl"] and words[1:2] != [safety.CURL_NO_RC]:

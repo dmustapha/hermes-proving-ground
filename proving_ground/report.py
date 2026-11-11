@@ -342,6 +342,14 @@ def conditions_lines(m: mx.Matrix) -> list[str]:
             f"wall time: {c.wall_s:.1f}s · started {c.started_at}"]
 
 
+_TERMINAL_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def terminal_safe(text: str) -> str:
+    """A saved or user-written label as one inert line: every control character (ESC, newline, CR) becomes `?`."""
+    return _TERMINAL_CONTROL.sub("?", text)
+
+
 def _rich_table(calls: Sequence[mx.CallInfo], columns: Sequence[str],
                 cells: Mapping[tuple[str, str], mx.Cell], call_width: int | None = None,
                 observed: int | None = None, titles: Mapping[str, str] | None = None,
@@ -361,7 +369,7 @@ def _rich_table(calls: Sequence[mx.CallInfo], columns: Sequence[str],
     for name in columns:
         table.add_column((titles or {}).get(name) or column_title(name), min_width=14, overflow="fold")
     for call in calls:
-        row = [f"[bold]{call.id}[/] {call.subject}"]
+        row = [f"[bold]{escape(terminal_safe(call.id))}[/] {escape(terminal_safe(call.subject))}"]
         for name in columns:
             cell = cells.get((name, call.id))
             mark = (marks or {}).get((name, call.id))
@@ -418,7 +426,7 @@ def _plain_table(m: mx.Matrix, color: bool, calls: Sequence[mx.CallInfo] | None 
     head = "test call".ljust(34) + "".join(titles[n].ljust(width) for n in m.columns)
     lines = [head, "-" * len(head)]
     for call in m.calls if calls is None else calls:
-        row = f"{call.id} {call.subject}"[:33].ljust(34)
+        row = terminal_safe(f"{call.id} {call.subject}")[:33].ljust(34)
         for name in m.columns:
             cell = m.cells.get((name, call.id))
             text = (marked_label(cell, marks) if cell else "pending").ljust(width)
