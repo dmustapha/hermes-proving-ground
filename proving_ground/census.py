@@ -23,13 +23,9 @@ WATCHED = "__provingground_watched__"
 
 
 def _narrow_kwargs(callback: Callable[..., Any], payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Hermes's own narrowing when importable, else the same rule: **kwargs callbacks get everything."""
-    try:
-        from hermes_cli.plugins_dispatch import PluginDispatchMixin
-
-        return PluginDispatchMixin._hook_callback_kwargs(callback, dict(payload))
-    except ImportError:
-        pass
+    """The rule Hermes applies before calling a hook or middleware (PluginDispatchMixin._hook_callback_kwargs,
+    plugins_dispatch.py:250-263), restated here so no private core module is imported: **kwargs callbacks and ones
+    without an introspectable signature get everything, narrow ones only the keyword names they declare."""
     try:
         parameters = inspect.signature(callback).parameters
     except (TypeError, ValueError):
