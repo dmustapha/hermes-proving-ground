@@ -27,6 +27,7 @@
 | **Finished launchd job labels** remain on macOS (no process) | Hermes's gateway on macOS starts a launchd one-off job per child home | Hermes clears them at its next gateway start (`gateway_launchd_runtime.py:106`); PG leaves no running process |
 | A plugin storing a **secret in `plugins.entries`** has it copied into the temp child | PG copies plugin settings so plugins behave as configured | the child is deleted after the column; rule 11 says secrets belong in Hermes's secret routes, which PG never reads |
 | Only **Hermes 0.23.1** tested; floor declared `>=0.23.1` | the build machine runs 0.23.1 | seams cited by file:line; re-test on upgrade |
+| The **parent `hermes` process** can write Hermes's own bytecode (`.pyc`) into your Hermes install | the stock launcher runs Python with `-I`, which ignores `PYTHONDONTWRITEBYTECODE`; that is Hermes's launcher, not PG | every drill child (and the `--version` probe) runs Hermes's interpreter command with `-B` and reports bytecode off; to keep the parent from writing too, run PG from a launcher copy that adds `-B` |
 | A **green matrix is not a grade** | ten synthetic inputs cannot cover a stack's behaviour | the wording is fixed: "Observed on N synthetic inputs in a sandbox" |
 
 ## Revision 1 tracked items (critical review findings not fully closed, with reasons)

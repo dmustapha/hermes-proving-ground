@@ -1,5 +1,5 @@
 # PROVING GROUND
-xray tests one plugin for malice; crash-test tests the agent under tool faults; policy-backtester tests one rule against past calls. PROVING GROUND tests what your *installed stack* does to known inputs, through the real hook chain, with the model never called.
+xray tests one plugin on its own in a trap-filled home; crash-test tests the agent under tool faults; policy-backtester tests one rule against past calls. PROVING GROUND tests what your *installed stack* does to known inputs, through the real hook chain, with the model never called.
 
 **A wiring test for your plugin stack.**
 
