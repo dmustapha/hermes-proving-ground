@@ -29,6 +29,20 @@ def leftover_processes(base: Path) -> list[int]:
     return [pid for pid in runner._ps_candidates() if runner._env_contains(pid, needle)]
 
 
+def wait_for_parallel_columns(base: Path, proc: subprocess.Popen, timeout_s: float = 120.0) -> None:
+    """Signal only once the driver has two child Hermes columns running at the same time (the baseline is done and
+    the parallel wave is in flight), so queued and in-flight columns both exist, however fast the machine is."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        assert proc.poll() is None, "the drill finished before any column was in flight"
+        running = [r for r in live_roots(base) if (r / "child.log").exists()
+                   and (safety.read_owner_marker(r) or (0, 0))[0] == proc.pid]
+        if len(running) >= 2:
+            return
+        time.sleep(0.2)
+    raise AssertionError("no two columns were in flight within the timeout")
+
+
 def test_stale_root_with_dead_pid_is_swept(settings) -> None:
     root = runner.create_drill_root(settings.temp_base)
     safety.write_owner_marker(root, 999999, time.time())
@@ -78,7 +92,7 @@ def test_ps_failure_never_skips_root_removal(settings, monkeypatch) -> None:
 @pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])
 def test_signal_mid_drill_stops_promptly_and_leaves_nothing(settings, sig) -> None:
     proc = subprocess.Popen([sys.executable, "-c", DRIVER, str(ROOT)], start_new_session=True)
-    time.sleep(12)
+    wait_for_parallel_columns(settings.temp_base, proc)
     os.killpg(proc.pid, sig)
     sent = time.monotonic()
     proc.wait(timeout=60)

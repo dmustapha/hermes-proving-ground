@@ -1,10 +1,10 @@
 # File: proving_ground/observer.py
-# [VERIFIED] hook kwargs: pre_tool_call(tool_name, args, task_id, session_id, tool_call_id, turn_id, api_request_id) hermes_cli/plugins.py:1133-1137;
+# hook kwargs: pre_tool_call(tool_name, args, task_id, session_id, tool_call_id, turn_id, api_request_id) hermes_cli/plugins.py:1133-1137;
 # transform_terminal_output(command, output, returncode, task_id, env_type, tool_call_id) tools/terminal_tool_result.py:144-146;
 # transform_tool_result(tool_name, args, result, <call ids>, duration_ms, status, error_type, error_message) model_tools.py:880-883;
 # post_tool_call(tool_name, args, result, <call ids>, duration_ms, status, error_type, error_message) model_tools.py:715-718.
-# None-returning transform hooks observe raw values: P3. post_tool_call args are final effective args: P2/P7.
-# [VERIFIED debug P2 kept-logs drill] the injected tool_call id reaches every call hook as tool_call_id; matrix.py treats
+# None-returning transform hooks observe raw values; post_tool_call args are the final effective args (both observed
+# in probe runs). The injected tool_call id reaches every call hook as tool_call_id; matrix.py treats
 # an event whose id matches no drill call as TOOL_CALL_ID_MISMATCH (never matched by order).
 """Observer hooks for the drill child. Records; never changes a result."""
 from __future__ import annotations
@@ -33,13 +33,18 @@ class EventLog:
         self._lock = threading.Lock()
 
     def write(self, ev: str, **fields: Any) -> None:
-        line = json.dumps({"t": time.time(), "pid": os.getpid(), "ev": ev, **fields}, default=str)
-        with self._lock:
-            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-            try:
-                os.write(fd, (line + "\n").encode("utf-8"))
-            finally:
-                os.close(fd)
+        """Never raises: a failed log write (disk full, an unserializable value) must not stop a hook from
+        blocking or recording an escape after it."""
+        try:
+            line = json.dumps({"t": time.time(), "pid": os.getpid(), "ev": ev, **fields}, default=str)
+            with self._lock:
+                fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                try:
+                    os.write(fd, (line + "\n").encode("utf-8"))
+                finally:
+                    os.close(fd)
+        except (OSError, ValueError, TypeError, RecursionError):
+            return
 
 
 def load_plan(state_dir: Path) -> dict[str, Any]:

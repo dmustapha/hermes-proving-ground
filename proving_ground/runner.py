@@ -1,6 +1,6 @@
 # File: proving_ground/runner.py  (part 1 of 5: types, cancellation, recorder)
-# [VERIFIED by the §9.1 run] stdlib only. Recorder binds 127.0.0.1 (never all interfaces; scanner bind_all_interfaces is high,
-# loopback hardcoded_ip_port is demoted to low per challenge-PG-safety §3a).
+# stdlib only. Recorder binds 127.0.0.1 (never all interfaces; scanner bind_all_interfaces is high,
+# loopback hardcoded_ip_port is a low finding).
 """Child-drill runner: one throwaway Hermes home per matrix column."""
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -37,7 +37,7 @@ IGNORED_NAMES = frozenset({".git", "__pycache__", ".venv", "node_modules", ".pyt
 ROOT_SUBDIRS = ("home", "tmp", "userhome", "sandbox", "xdg/config", "xdg/cache", "xdg/data", "xdg/state")
 POLL_S = 0.2
 KILL_GRACE_S = 3.0
-# Debug P4 M-03: bounded reads. A column whose child.log or events.jsonl passes LOG_LIMIT_BYTES is stopped (LOG_LIMIT);
+# Bounded reads. A column whose child.log or events.jsonl passes LOG_LIMIT_BYTES is stopped (LOG_LIMIT);
 # events are read up to EVENTS_MAX_BYTES, the output tail from the end, the escape scan only over new bytes.
 LOG_LIMIT_BYTES = 32 * 1024 * 1024
 EVENTS_MAX_BYTES = 16 * 1024 * 1024
@@ -46,9 +46,11 @@ ESCAPED_NEEDLE = b'"ev": "escaped"'
 VERSION_RE = re.compile(r"v(\d+\.\d+\.\d+).*?local\s+([0-9a-f]{7,40})")
 
 CANCEL = threading.Event()  # set by SIGINT/SIGTERM/SIGHUP; checked before every spawn and in every poll loop
-_LIVE_LOCK = threading.RLock()  # re-entrant: the signal handler runs cancel_everything in the main thread (P4 M-02)
+_LIVE_LOCK = threading.RLock()  # re-entrant: the signal handler runs cancel_everything in the main thread
 _LIVE_PROCS: dict[int, subprocess.Popen] = {}
 _LIVE_ROOTS: set[Path] = set()
+_CLEANED: set[int] = set()  # pids cancel_everything stopped (groups and env-matched daemons), for the cancel message
+WARM_TIMEOUT_S = 900.0  # the one-off runtime install (~650 MB) needs far longer than a drill column
 
 
 class Cancelled(Exception):
@@ -129,7 +131,7 @@ class Recorder:
             return list(self.entries)
 
     def for_column(self, token: str) -> list[str]:
-        """Only this column's recorded requests: entries are `<column-token>/<CALL_ID>` (ARCH-F8, PRD-F6)."""
+        """Only this column's recorded requests: entries are `<column-token>/<CALL_ID>`."""
         prefix = token + "/"
         return [e[len(prefix):] for e in self.snapshot() if e.startswith(prefix)]
 
@@ -142,15 +144,15 @@ class Recorder:
         self._server.server_close()
 
 # File: proving_ground/runner.py  (part 2 of 5: child home, config, env, argv)
-# [VERIFIED] config shape plugins.enabled + terminal.backend/cwd: pg-probe/mk_home.sh (P1, P5);
+# config shape plugins.enabled + terminal.backend/cwd: observed in probe child homes;
 # approvals keys and values: hermes_cli/config_defaults.py:1657-1662 (mode, timeout, cron_mode, single_query_mode,
 # unattended_mode); plugin settings live at plugins.entries.<key> (hermes_cli/plugins_state.py:60-63);
-# argv: P1 command line (`chat -q 'run drill' -Q -t terminal --provider custom --base-url http://127.0.0.1:9/v1 -m pg-model`);
-# comma toolsets accepted (hermes_cli/_parser.py:255); symlinked shared installs dir: P5.
-# [VERIFIED 2026-11-11 forge run] HOME/XDG/TMPDIR redirection + dead proxies work once config carries a `model:` dict
+# argv: the probe's command line (`chat -q 'run drill' -Q -t terminal --provider custom --base-url http://127.0.0.1:9/v1 -m pg-model`);
+# comma toolsets accepted (hermes_cli/_parser.py:255); a symlinked shared installs dir works (probe run).
+# Observed 2026-11-11: HOME/XDG/TMPDIR redirection + dead proxies work once config carries a `model:` dict
 # (hermes_cli/main.py _has_any_provider_configured: "model as a dict with provider/base_url/api_key means setup ran");
-# without it the child stops at _first_run_setup_guard (main.py:1555, :1620). P1 passed only via host-wide fallbacks
-# under the real HOME. [ASSUMED] a JSON flow mapping under plugins.entries parses (fixtures have no entries).
+# without it the child stops at _first_run_setup_guard (main.py:1555, :1620); under the real HOME a child passes only via
+# host-wide fallbacks. Assumption: a JSON flow mapping under plugins.entries parses (fixtures have no entries).
 
 
 def render_child_config(plugin_keys: Sequence[str], entries: Mapping[str, Any], sandbox: Path) -> str:
@@ -167,7 +169,7 @@ def render_child_config(plugin_keys: Sequence[str], entries: Mapping[str, Any], 
 
 
 def approvals_summary() -> str:
-    """Derived from the config PG actually writes into every child (ARCH-F15), not a hard-coded string."""
+    """Derived from the config PG actually writes into every child, not a hard-coded string."""
     text = render_child_config([], {}, Path("/nonexistent"))
     keys = ("mode", "single_query_mode", "cron_mode", "unattended_mode")
     found = dict(re.findall(r'^\s+(' + "|".join(keys) + r'): "([a-z]+)"$', text, re.M))
@@ -198,12 +200,19 @@ def child_argv(launch: Path | Sequence[str], n_calls: int) -> list[str]:
 
 
 def create_drill_root(temp_base: Path) -> Path:
+    """A new marked root; if marking or populating it fails, it is removed (an unmarked root is never swept)."""
     root = Path(tempfile.mkdtemp(prefix=safety.ROOT_PREFIX, dir=temp_base)).resolve()
-    safety.write_owner_marker(root, os.getpid(), time.time())
-    with _LIVE_LOCK:
-        _LIVE_ROOTS.add(root)
-    for sub in ROOT_SUBDIRS:
-        (root / sub).mkdir(parents=True, exist_ok=True)
+    try:
+        safety.write_owner_marker(root, os.getpid(), time.time())
+        with _LIVE_LOCK:
+            _LIVE_ROOTS.add(root)
+        for sub in ROOT_SUBDIRS:
+            (root / sub).mkdir(parents=True, exist_ok=True)
+    except BaseException:
+        shutil.rmtree(root, ignore_errors=True)
+        with _LIVE_LOCK:
+            _LIVE_ROOTS.discard(root)
+        raise
     return root
 
 
@@ -223,13 +232,13 @@ def ensure_private_dir(path: Path, what: str) -> None:
 
 
 def ensure_private_cache(cache: Path) -> None:
-    """The shared warm cache must be ours: no symlink component, our uid, mode 0700 (ARCH-F10)."""
+    """The shared warm cache must be ours: no symlink component, our uid, mode 0700."""
     for path in (cache.parent, cache):
         ensure_private_dir(path, "warm cache")
 
 
 def _copy_filter(src_root: Path, dropped: list[str]) -> Callable[[str, list[str]], set[str]]:
-    """copytree ignore: drop build dirs, credential-shaped files and symlinks that leave the plugin dir (ARCH-F11)."""
+    """copytree ignore: drop build dirs, credential-shaped files and symlinks that leave the plugin dir."""
     real_root = src_root.resolve()
 
     def ignore(directory: str, names: list[str]) -> set[str]:
@@ -254,13 +263,28 @@ def _copy_plugin(src: Path, dest: Path, dropped: list[str] | None = None) -> Non
     shutil.copytree(src, dest, ignore=_copy_filter(src, sink), symlinks=True)
 
 
+TOKEN_VALUE = re.compile(r"^(sk|ghp|gho|github_pat|xox[abp]|AKIA)[-_A-Za-z0-9]{16,}$")
+
+
+def _redact_value(value: Any, dropped: list[str], key: str, name: str) -> Any:
+    """Nested mappings and lists are redacted too; a token-shaped string under any name is withheld."""
+    if isinstance(value, Mapping):
+        return redact_entries(value, dropped, key)
+    if isinstance(value, (list, tuple)):
+        return [_redact_value(item, dropped, key, name) for item in value]
+    if isinstance(value, str) and TOKEN_VALUE.match(value):
+        dropped.append(f"{key}: a token-shaped value under {name} not copied")
+        return "[withheld by PROVING GROUND]"
+    return value
+
+
 def redact_entries(settings: Mapping[str, Any], dropped: list[str], key: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for name, value in settings.items():
         if safety.SECRET_KEY.search(str(name)):
             dropped.append(f"{key}: setting {name} (secret-shaped) not copied")
         else:
-            out[name] = redact_entries(value, dropped, key) if isinstance(value, Mapping) else value
+            out[name] = _redact_value(value, dropped, key, str(name))
     return out
 
 
@@ -292,9 +316,9 @@ def seed_sandbox(sandbox: Path, calls: Sequence[testcalls.DrillCall]) -> None:
             target.write_text(text, encoding="utf-8")
 
 # File: proving_ground/runner.py  (part 3 of 5: spawn, watch, kill, cancel)
-# [VERIFIED] env-match kill of the detached per-home daemon: pg-probe/cleanup.sh (`ps eww -p PID | grep HERMES_HOME=<home>`),
-# P5 ("kill the daemon after each run"); daemon command contains hermes_cli (gateway_runtime_start.py:62-63).
-# [VERIFIED by the §9.1 run] process-group timeout path and ESCAPED early kill (tests/test_cleanup.py, tests/test_escape_abort.py).
+# env-match kill of the detached per-home daemon: `ps eww -p PID` matched on HERMES_HOME=<home>
+# (a probe run showed the daemon must be killed after each run); daemon command contains hermes_cli (gateway_runtime_start.py:62-63).
+# process-group timeout path and ESCAPED early kill (tests/test_cleanup.py, tests/test_escape_abort.py).
 
 
 def _ps_candidates() -> list[int]:
@@ -352,18 +376,21 @@ def _kill_group(proc: subprocess.Popen) -> None:
             return
 
 
-def cancel_everything(*_signal_args: Any) -> None:
-    """Signal handler and atexit hook: stop queued work, kill every live child group and env-matched daemon."""
+def cancel_everything(*_signal_args: Any) -> int:
+    """Signal handler and atexit hook: stop queued work, kill every live child group and env-matched daemon.
+    Returns how many distinct processes cancellation has stopped so far in this process."""
     CANCEL.set()
     with _LIVE_LOCK:
         procs, roots = list(_LIVE_PROCS.values()), list(_LIVE_ROOTS)
     for proc in procs:
         _kill_group(proc)
+        _CLEANED.add(proc.pid)
     for root in roots:
-        kill_home_processes(root / "home")
+        _CLEANED.update(kill_home_processes(root / "home"))
         shutil.rmtree(root, ignore_errors=True)
         with _LIVE_LOCK:
             _LIVE_ROOTS.discard(root)
+    return len(_CLEANED)
 
 
 def install_cancellation() -> None:
@@ -382,7 +409,7 @@ def install_cancellation() -> None:
 
 class EscapeScan:
     """Incremental scan of events.jsonl for the escaped event: each poll reads only the bytes added since the last
-    one (at most SCAN_CHUNK_BYTES), keeping a short carry so a needle split across reads is still found (P4 M-03)."""
+    one (at most SCAN_CHUNK_BYTES), keeping a short carry so a needle split across reads is still found."""
 
     def __init__(self, path: Path) -> None:
         self.path, self.offset, self._carry = path, 0, b""
@@ -452,11 +479,24 @@ def _watch(proc: subprocess.Popen, events_path: Path, settings: RunnerSettings,
     return proc.returncode, None
 
 # File: proving_ground/runner.py  (part 4 of 5: one column, events, sweep, warm-up)
-# [VERIFIED by the §9.1 run] composition of the verified pieces above.
+# composition of the verified pieces above.
+
+
+def _event_from(line: str) -> dict[str, Any] | None:
+    """One events.jsonl line, kept only when it is an object with a numeric `t` and a string `ev`: a torn append
+    or a line written by another plugin must not stop the drill."""
+    try:
+        event = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(event, dict) or not isinstance(event.get("ev"), str):
+        return None
+    t = event.get("t", 0.0)
+    return event if isinstance(t, (int, float)) and not isinstance(t, bool) else None
 
 
 def read_events(home: Path, max_bytes: int = EVENTS_MAX_BYTES) -> list[dict[str, Any]]:
-    """At most *max_bytes* of events.jsonl; a longer log adds a LOG_LIMIT abort instead of loading it all (P4 M-03)."""
+    """At most *max_bytes* of events.jsonl; a longer log adds a LOG_LIMIT abort instead of loading it all."""
     path = home / safety.STATE_DIRNAME / "events.jsonl"
     events: list[dict[str, Any]] = []
     try:
@@ -467,10 +507,9 @@ def read_events(home: Path, max_bytes: int = EVENTS_MAX_BYTES) -> list[dict[str,
     clipped = len(raw) > max_bytes
     lines = raw[:max_bytes].decode("utf-8", errors="replace").splitlines()
     for line in lines[:-1] if clipped else lines:
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+        event = _event_from(line)
+        if event is not None:
+            events.append(event)
     if clipped:
         events.append({"t": float("inf"), "ev": "abort", "reason": "LOG_LIMIT"})
     return sorted(events, key=lambda e: float(e.get("t", 0.0)))
@@ -491,7 +530,7 @@ def abort_reason_from(events: Sequence[Mapping[str, Any]], watch_reason: str | N
 
 
 def _tail(path: Path, limit: int = 4000) -> str:
-    """The last *limit* characters, reading at most 4 * limit bytes from the end (P4 M-03)."""
+    """The last *limit* characters, reading at most 4 * limit bytes from the end."""
     try:
         with path.open("rb") as handle:
             handle.seek(max(0, _size(path) - 4 * limit))
@@ -508,7 +547,7 @@ def _copy_private(src: Path, dst: Path) -> None:
 
 
 def _keep_logs(root: Path, spec: ColumnSpec, temp_base: Path) -> None:
-    """PROVINGGROUND_KEEP_LOGS: the logs dir gets the warm cache's checks (no symlink, our uid, 0700) (P4 L-01)."""
+    """PROVINGGROUND_KEEP_LOGS: the logs dir gets the warm cache's checks (no symlink, our uid, 0700)."""
     if not os.environ.get(KEEP_LOGS_ENV):
         return
     target = temp_base / "provingground-logs"
@@ -535,6 +574,8 @@ def _cleanup_root(root: Path, spec: ColumnSpec, temp_base: Path) -> None:
 
 def run_column(spec: ColumnSpec, templates: Sequence[testcalls.CallTemplate], canary: str,
                recorder: Recorder, settings: RunnerSettings, *, network: bool = False) -> CellRun:
+    """One column. An unexpected error inside it (an unreadable plugin file, a bad call) becomes that column's
+    COLUMN_ERROR abort, reported like any stopped column, instead of cancelling the sibling columns."""
     if CANCEL.is_set():
         raise Cancelled("cancelled before the column started")
     root = create_drill_root(settings.temp_base)
@@ -551,6 +592,12 @@ def run_column(spec: ColumnSpec, templates: Sequence[testcalls.CallTemplate], ca
         return CellRun(spec, str(root / "sandbox"), column_url, [c.as_plan() for c in calls], events,
                        exit_code, reason, time.monotonic() - started, recorder.for_column(column_token),
                        _tail(root / "child.log"), tuple(dropped))
+    except (Cancelled, safety.Refusal):
+        raise
+    except Exception as exc:
+        unrun = [{"id": t.id, "call_ref": testcalls.call_ref_for(t.id), "tool": t.tool, "args": {}} for t in templates]
+        return CellRun(spec, str(root / "sandbox"), column_url, unrun, [], None, f"COLUMN_ERROR:{type(exc).__name__}",
+                       time.monotonic() - started, output_tail=str(exc)[:600], copy_notes=tuple(dropped))
     finally:
         _cleanup_root(root, spec, settings.temp_base)
 
@@ -585,7 +632,7 @@ def leftovers(temp_base: Path) -> tuple[int, int]:
 
 def run_column_reliably(spec: ColumnSpec, templates: Sequence[testcalls.CallTemplate], canary: str,
                         recorder: Recorder, settings: RunnerSettings) -> CellRun:
-    """One retry for a column that reached CELL_TIMEOUT (observed once under parallel cold starts, DT-7)."""
+    """One retry for a column that reached CELL_TIMEOUT (observed once under parallel cold starts)."""
     run = run_column(spec, templates, canary, recorder, settings)
     if run.abort_reason != "CELL_TIMEOUT" or CANCEL.is_set():
         return run
@@ -601,42 +648,62 @@ WARM_DISCLOSURE = ("PROVING GROUND is preparing its isolated Hermes runtime once
                    "approvals stay on deny. Later drills reuse it with all proxies pointed at a closed loopback port.")
 
 
+WARM_NOTICE = ("warm-up: Hermes's own installer is fetching its runtime (~650 MB, network on, no credentials, "
+               "approvals deny) into {cache}; up to 15 minutes, once per temp dir.")
+
+
 def warm_up(settings: RunnerSettings) -> CellRun:
-    """One zero-call child with network allowed so Hermes installs its runtime into the shared cache."""
+    """One zero-call child with network allowed so Hermes installs its runtime into the shared cache.
+    It gets its own long timeout (WARM_TIMEOUT_S): the first install is far slower than a drill column."""
     ensure_private_cache(settings.warm_cache)
+    slow = replace(settings, cell_timeout_s=max(settings.cell_timeout_s, WARM_TIMEOUT_S))
     with Recorder() as recorder:
-        run = run_column(ColumnSpec("warm-up", ()), [], testcalls.make_canary(), recorder, settings, network=True)
+        run = run_column(ColumnSpec("warm-up", ()), [], testcalls.make_canary(), recorder, slow, network=True)
     if run.abort_reason in (None, "NOT_ACTIVATED") and run.exit_code == 0:
         (settings.warm_cache / WARM_MARKER).write_text(str(time.time()), encoding="utf-8")
     return run
 
+
+def warm_failure(run: CellRun) -> safety.Refusal:
+    """The clean refusal for a warm-up that did not leave the cache warm."""
+    why = run.abort_reason or f"child exit {run.exit_code}"
+    tail = " ".join(run.output_tail.split())[-300:]
+    return safety.Refusal("WARMUP_FAILED", f"Hermes's runtime install did not finish ({why}). Check the network and "
+                          f"rerun `hermes provingground warm`." + (f" Last output: {tail}" if tail else ""))
+
 # File: proving_ground/runner.py  (part 5 of 5: subjects, columns, the drill)
-# [VERIFIED] enabled list at plugins.enabled and user plugins under <HERMES_HOME>/plugins/<key> (registry key = dir
-# name, hermes_cli/plugins_manifest.py:378); load order alphabetical by key with requires_plugins first (P3,
-# plugins_manifest.py:246-283). `hermes --version` prints "Hermes Agent v0.23.1 (2026.9.24) · stable · local 3b4215785882" (observed).
-# [ASSUMED] pip/entry-point plugins have no directory and are reported as skipped (LIMITATIONS.md).
+# enabled list at plugins.enabled and user plugins under <HERMES_HOME>/plugins/<key> (registry key = dir
+# name, hermes_cli/plugins_manifest.py:378); load order alphabetical by key with requires_plugins first
+# (plugins_manifest.py:246-283). `hermes --version` prints "Hermes Agent v0.23.1 (2026.9.24) · stable · local 3b4215785882" (observed).
+# Assumption: pip/entry-point plugins have no directory and are reported as skipped (LIMITATIONS.md).
 
 
-def _manifest(path: Path) -> dict[str, Any]:
+def _manifest(path: Path) -> Mapping[str, Any]:
+    """A plugin's manifest is third-party data: anything but a mapping reads as an empty manifest."""
     from ruamel.yaml import YAML
 
     try:
-        return YAML(typ="safe", pure=True).load((path / "plugin.yaml").read_text(encoding="utf-8")) or {}
+        data = YAML(typ="safe", pure=True).load((path / "plugin.yaml").read_text(encoding="utf-8"))
     except Exception:
         return {}
+    return data if isinstance(data, Mapping) else {}
+
+
+def _listed(manifest: Mapping[str, Any], key: str) -> list[Any]:
+    value = manifest.get(key)
+    return value if isinstance(value, list) else []
 
 
 def _required_env(manifest: Mapping[str, Any]) -> tuple[str, ...]:
-    names = []
-    for item in manifest.get("requires_env") or []:
-        names.append(str(item.get("name")) if isinstance(item, Mapping) else str(item))
-    return tuple(n for n in names if n)
+    """requires_env items are names or {name: ...}; anything else (a bare string, a nameless dict) is ignored."""
+    names = [item.get("name") if isinstance(item, Mapping) else item for item in _listed(manifest, "requires_env")]
+    return tuple(n for n in names if isinstance(n, str) and n)
 
 
 def load_order(subjects: Sequence[PluginSource]) -> list[PluginSource]:
     """Mirror of plugins_manifest.resolve_plugin_load_order (plugins_manifest.py:237-283): graphlib layers, each
-    layer alphabetical, so a plugin's requires_plugins load first; a cycle falls back to alphabetical for all
-    (ARCH-F16). The child reports the order it really used and a mismatch becomes a report note (point d)."""
+    layer alphabetical, so a plugin's requires_plugins load first; a cycle falls back to alphabetical for all.
+    The child reports the order it really used and a mismatch becomes a report note."""
     import graphlib
 
     by_key = {s.key: s for s in subjects}
@@ -656,7 +723,7 @@ def load_order(subjects: Sequence[PluginSource]) -> list[PluginSource]:
 
 def _requires(manifest: Mapping[str, Any]) -> tuple[str, ...]:
     """requires_plugins items are ids or {id, version_range} (plugins_manifest.py:123-130)."""
-    ids = [item.get("id") if isinstance(item, Mapping) else item for item in manifest.get("requires_plugins") or []]
+    ids = [item.get("id") if isinstance(item, Mapping) else item for item in _listed(manifest, "requires_plugins")]
     return tuple(str(i) for i in ids if isinstance(i, str) and i)
 
 
@@ -671,7 +738,8 @@ def discover_subjects(hermes_home: Path, config: Mapping[str, Any]) -> tuple[lis
         if not (path / "plugin.yaml").is_file():
             skipped.append((key, "not a directory plugin under your Hermes home"))
             continue
-        settings = (entries.get(key) or {}) if isinstance(entries, Mapping) else {}
+        settings = entries.get(key) if isinstance(entries, Mapping) else None
+        settings = settings if isinstance(settings, Mapping) else None
         manifest = _manifest(path)
         requires = _requires(manifest)
         subjects.append(PluginSource(key, path, settings or None, _required_env(manifest), requires))
@@ -700,13 +768,16 @@ def plan_columns(subjects: Sequence[PluginSource]) -> list[ColumnSpec]:
 
 def _run_throwaway(settings: RunnerSettings, argv: Sequence[str]) -> subprocess.CompletedProcess:
     """Run a short Hermes command in a throwaway PG root (installs -> warm cache), so the real Hermes tree is not
-    touched: even --version takes a lease on the runtime environment it resolves (revision-1 finding)."""
+    touched: even --version takes a lease on the runtime environment it resolves (found in review)."""
     root = create_drill_root(settings.temp_base)
     try:
         ensure_private_cache(settings.warm_cache)
         (root / "home" / "installs").symlink_to(settings.warm_cache, target_is_directory=True)
         return subprocess.run(list(argv), capture_output=True, text=True, timeout=60, check=False,
                               env=child_env(os.environ, root, ""), cwd=root / "sandbox", stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired as exc:
+        raise safety.Refusal("HERMES_UNRESPONSIVE", f"`{Path(argv[0]).name} {' '.join(argv[1:])[-60:]}` did not "
+                             "answer within 60 s; check that hermes starts on its own.") from exc
     finally:
         _cleanup_root(root, ColumnSpec("version", ()), settings.temp_base)
 
@@ -718,7 +789,7 @@ _PREFIXES: dict[Path, tuple[str, ...]] = {}
 def parse_runtime_command(stdout: str) -> tuple[str, ...] | None:
     """`hermes --print-runtime-command` prints the interpreter argv as JSON (hermes_cli/_launchers.py:75-84,
     "machine boundary for consumers holding the exact published launcher"). Insert -B after the interpreter so the
-    child writes no bytecode into the Hermes tree; the launcher's -I isolation is kept (DEV-021, point 5)."""
+    child writes no bytecode into the Hermes tree; the launcher's -I isolation is kept."""
     try:
         argv = json.loads(stdout.strip().splitlines()[-1])
     except (json.JSONDecodeError, ValueError, IndexError):
@@ -764,7 +835,7 @@ def _to_column(run: CellRun) -> matrix.ColumnRun:
 def _parallel(specs: Sequence[ColumnSpec], work: Callable[[ColumnSpec], CellRun], jobs: int,
               on_done: Callable[[CellRun], None] | None = None) -> list[CellRun]:
     """Run columns concurrently; report each as it finishes; return results in spec order.
-    Any exception or signal cancels queued columns (cancel_futures) and kills in-flight children (ARCH-F2)."""
+    Any exception or signal cancels queued columns (cancel_futures) and kills in-flight children."""
     pool = ThreadPoolExecutor(max_workers=max(1, jobs))
     results: list[CellRun | None] = [None] * len(specs)
     try:

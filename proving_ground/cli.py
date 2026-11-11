@@ -1,7 +1,7 @@
 # File: proving_ground/cli.py  (part 1 of 2: settings, posture, the run)
-# [VERIFIED] public modules per hermes_cli/data/plugin_api.json; argparse setup_fn/handler_fn contract
+# Public modules per hermes_cli/data/plugin_api.json; argparse setup_fn/handler_fn contract
 # (plugins_context.py:442-453, docs/index.md "Register CLI commands"); slash handler keywords platform/session_id
-# (docs/index.md "Calling-session context"). [VERIFIED by the §9.1 run] the composition.
+# (docs/index.md "Calling-session context").
 """`hermes provingground` and `/provingground`."""
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import traceback
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -23,10 +24,11 @@ PG_SOURCE = Path(__file__).resolve().parent.parent
 REPORTS_SUBDIR = "reports"
 LATEST = "latest.json"
 LAST_ERROR = "last-error.json"
-REPORT_MAX_BYTES = 8 * 1024 * 1024  # debug P4 M-03: a saved report never exceeds this; long strings are clipped
+REPORT_MAX_BYTES = 8 * 1024 * 1024  # a saved report never exceeds this; long strings are clipped
 REPORTS_KEPT = 20  # the newest report-*.json files kept; older ones are removed on save
 CLIP_MARK = " …[clipped by PROVING GROUND: report size cap]"
 FIXTURE_KEYS = ("fx_guard", "fx_rewriter", "fx_trimmer")
+DEBUG_ENV = "PROVINGGROUND_DEBUG"  # set it to see the Python traceback instead of the one-line error
 
 
 def find_hermes(explicit: str | None) -> Path:
@@ -54,7 +56,7 @@ def user_config() -> dict[str, Any]:
 
 
 def check_live_posture(config: dict[str, Any], platform: str | None) -> str:
-    """Runs before every spawning entry point: run, warm and the slash command (ARCH-F4, ARCH-F9)."""
+    """Runs before every spawning entry point: run, warm and the slash command."""
     from cron.execution_identity import current_cron_execution
 
     mode = safety.normalize_approval_mode((config.get("approvals") or {}).get("mode"))
@@ -65,14 +67,30 @@ def check_live_posture(config: dict[str, Any], platform: str | None) -> str:
     return ""
 
 
+def refuse_unknown(code: str, what: str, asked: Sequence[str], known: Sequence[str]) -> None:
+    """A typo in --without or --only must not silently run another drill than the one asked for."""
+    unknown = sorted(set(asked) - set(known))
+    if unknown:
+        raise safety.Refusal(code, f"unknown {what} {', '.join(unknown)}; choose from {', '.join(sorted(known))}.")
+
+
 def select_subjects(args: argparse.Namespace, settings: runner.RunnerSettings) -> tuple[list[runner.PluginSource], list[tuple[str, str]]]:
+    without = list(getattr(args, "without", None) or ())
     if getattr(args, "fixtures", False):
-        return runner.fixture_subjects(settings.pg_source, getattr(args, "without", None) or ()), []
+        refuse_unknown("UNKNOWN_PLUGIN", "plugin", without, FIXTURE_KEYS)
+        return runner.fixture_subjects(settings.pg_source, without), []
     from hermes_constants import get_hermes_home
 
     subjects, skipped = runner.discover_subjects(Path(get_hermes_home()), user_config())
-    without = set(getattr(args, "without", None) or ())
-    return [s for s in subjects if s.key not in without], skipped
+    refuse_unknown("UNKNOWN_PLUGIN", "plugin", without, [s.key for s in subjects] + [k for k, _w in skipped])
+    return [s for s in subjects if s.key not in set(without)], skipped
+
+
+def calls_probe() -> testcalls.SandboxContext:
+    """A render-only context shaped like a column's (nothing is created there): user calls are checked against
+    the same containment rules and grammar a column applies."""
+    sandbox = Path(tempfile.gettempdir()).resolve() / "pg-calls-probe" / "sandbox"
+    return testcalls.SandboxContext(sandbox, "http://127.0.0.1:9/probe", testcalls.make_canary())
 
 
 def select_templates(args: argparse.Namespace) -> list[testcalls.CallTemplate]:
@@ -80,10 +98,23 @@ def select_templates(args: argparse.Namespace) -> list[testcalls.CallTemplate]:
     if getattr(args, "calls", None):
         try:
             templates = testcalls.load_user_calls(Path(args.calls), templates)
+            testcalls.render(templates, calls_probe())  # a call that fails the grammar is refused before any spawn
         except (OSError, testcalls.TestCallError) as exc:
             raise safety.Refusal("BAD_CALLS_FILE", str(exc)) from exc
-    only = set(getattr(args, "only", None) or ())
-    return [t for t in templates if not only or t.id in only]
+    only = list(getattr(args, "only", None) or ())
+    refuse_unknown("UNKNOWN_CALL", "test call", only, [t.id for t in templates])
+    return [t for t in templates if not only or t.id in set(only)]
+
+
+def ensure_warm(settings: runner.RunnerSettings) -> None:
+    """Warm the runtime cache once, announced in one line; a warm-up that fails is a clean refusal, never a
+    drill against a cold cache."""
+    if runner.is_warm(settings):
+        return
+    print(runner.WARM_NOTICE.format(cache=settings.warm_cache), file=sys.stderr, flush=True)
+    run = runner.warm_up(settings)
+    if not runner.is_warm(settings):
+        raise runner.warm_failure(run)
 
 
 def call_infos(templates: Sequence[testcalls.CallTemplate]) -> list[matrix.CallInfo]:
@@ -123,11 +154,9 @@ def run_matrix(args: argparse.Namespace, on_partial: Callable[[report.LiveFrame]
     note = check_live_posture(config, platform)
     settings = build_settings(args)
     runner.sweep_stale_roots(settings.temp_base)
-    if not runner.is_warm(settings):
-        print(runner.WARM_DISCLOSURE.format(cache=settings.warm_cache), file=sys.stderr, flush=True)
-        runner.warm_up(settings)
     subjects, skipped = select_subjects(args, settings)
     templates = select_templates(args)
+    ensure_warm(settings)
     infos, planned, done = call_infos(templates), planned_columns(subjects), []
     if on_partial is not None:
         on_partial(report.LiveFrame(tuple(infos), planned))
@@ -172,9 +201,17 @@ def _clip(value: Any, limit: int) -> Any:
     return value
 
 
+def shareable(m: matrix.Matrix) -> matrix.Matrix:
+    """The matrix as it is saved and exported: this machine's home and temp paths in any recorded text (a plugin
+    traceback, an error message) become ~ and {TMP}. The terminal view, which stays local, is not changed."""
+    temp = tempfile.gettempdir()
+    rules = report.path_rules({str(Path.home()): "~", temp: "{TMP}", os.path.realpath(temp): "{TMP}"})
+    return report.matrix_from_dict(report.scrub_paths(report.matrix_to_dict(m), rules))
+
+
 def bounded_report_json(m: matrix.Matrix, max_bytes: int = REPORT_MAX_BYTES) -> str:
-    """The report JSON, with the longest strings clipped (and marked) until it fits *max_bytes* (P4 M-03)."""
-    data, limit = report.matrix_to_dict(m), 1 << 20
+    """The report JSON, with the longest strings clipped (and marked) until it fits *max_bytes*."""
+    data, limit = report.matrix_to_dict(shareable(m)), 1 << 20
     text = json.dumps(data, indent=2, ensure_ascii=False)
     while len(text.encode("utf-8")) > max_bytes and limit >= 64:
         text, limit = json.dumps(_clip(data, limit), indent=2, ensure_ascii=False), limit // 4
@@ -197,7 +234,7 @@ def save(m: matrix.Matrix) -> Path:
 
 
 def record_drill_failure(exc: BaseException) -> None:
-    """A failed slash drill leaves last-error.json, so `show` never serves the previous report as current (P4 M-01)."""
+    """A failed slash drill leaves last-error.json, so `show` never serves the previous report as current."""
     reason = {"code": getattr(exc, "code", type(exc).__name__), "message": str(getattr(exc, "message", exc))[:2000], "at": now_iso()}
     try:
         (reports_dir() / LAST_ERROR).write_text(json.dumps(reason), encoding="utf-8")
@@ -229,18 +266,32 @@ def load_latest() -> matrix.Matrix:
     path = reports_dir() / LATEST
     if not path.is_file():
         raise safety.Refusal("NO_REPORT", "no report yet; run `hermes provingground` (or add --fixtures) first.")
-    return report.matrix_from_dict(json.loads(path.read_text(encoding="utf-8")))
+    try:
+        return report.matrix_from_dict(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise safety.Refusal("BAD_REPORT", f"the saved report {path.name} cannot be read ({type(exc).__name__}: "
+                             f"{str(exc)[:200]}); run a new drill to replace it.") from exc
 
 
 def write_exports(m: matrix.Matrix, args: argparse.Namespace) -> list[str]:
-    written = []
+    written, m = [], shareable(m)
     for flag, render in (("json_out", lambda x: json.dumps(report.matrix_to_dict(x), indent=2, ensure_ascii=False)),
                          ("markdown_out", report.render_markdown), ("html_out", report.render_html)):
         target = getattr(args, flag, None)
-        if target:
+        if not target:
+            continue
+        try:
+            Path(target).parent.mkdir(parents=True, exist_ok=True)
             Path(target).write_text(render(m), encoding="utf-8")
-            written.append(str(target))
+        except OSError as exc:
+            raise safety.Refusal("EXPORT_FAILED", f"could not write {target} ({exc.strerror or exc}); the drill's "
+                                 "report is saved: `hermes provingground show --html PATH` exports it again.") from exc
+        written.append(str(target))
     return written
+
+
+def contract_total(m: matrix.Matrix) -> int:
+    return sum(len(c.expect or {}) for c in m.calls)
 
 
 def exit_code_for(m: matrix.Matrix, check: bool = False) -> int:
@@ -248,15 +299,22 @@ def exit_code_for(m: matrix.Matrix, check: bool = False) -> int:
         return 4
     if m.aborted:
         return 3
-    return 5 if check and matrix.check_expectations(m)[0] else 0
+    if not check:
+        return 0
+    unmet, missing = matrix.check_expectations(m)
+    return 5 if unmet or missing or contract_total(m) == 0 else 0
 
 
 def expectation_lines(m: matrix.Matrix) -> list[str]:
+    """--check output: unmet and unevaluated expectations both fail the contract, and so does an empty one."""
     unmet, missing = matrix.check_expectations(m)
-    lines = [f"CHECK FAILED {cid} × {col}: expected {' or '.join(allowed)}, observed {actual}"
+    total = contract_total(m)
+    if total == 0:
+        return ["CHECK FAILED: --check was given but no test call declares an expect: contract"]
+    label = lambda token: matrix.LABELS[matrix.Outcome(token)]  # noqa: E731
+    lines = [f"CHECK FAILED {cid} × {col}: expected {' or '.join(label(a) for a in allowed)}, observed {label(actual)}"
              for cid, col, allowed, actual in unmet]
-    lines += [f"check not evaluated {cid} × {col}: that column is not in this run" for cid, col in missing]
-    total = sum(len(c.expect or {}) for c in m.calls)
+    lines += [f"CHECK FAILED {cid} × {col}: that column is not in this run" for cid, col in missing]
     return lines + [f"contract: {total - len(unmet) - len(missing)} of {total} expectations met"]
 
 
@@ -283,7 +341,7 @@ def _live_run(args: argparse.Namespace) -> tuple[matrix.Matrix, str]:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    runner.install_cancellation()  # SIGINT, SIGTERM, SIGHUP: stop queued columns, kill every child (ARCH-F2)
+    runner.install_cancellation()  # SIGINT, SIGTERM, SIGHUP: stop queued columns, kill every child
     m, note = _live_run(args) if not args.quiet else run_matrix(args)
     saved = save(m)
     if not args.quiet:
@@ -306,15 +364,26 @@ def notable_text(m: matrix.Matrix) -> str:
                       *lines])
 
 
+def resolve_column(m: matrix.Matrix, column: str | None) -> str:
+    """`--column` takes baseline, stack, solo:<plugin> or a bare plugin name."""
+    if column is None:
+        return "stack" if "stack" in m.columns else m.columns[-1]
+    return f"solo:{column}" if column not in m.observations and f"solo:{column}" in m.observations else column
+
+
 def cmd_show(args: argparse.Namespace) -> int:
     failure = last_drill_failure()
     if failure:
         print(failure + "\nthe report below is from the previous successful drill")
     m = load_latest()
+    written = write_exports(m, args)
+    for path in written:
+        print(f"wrote {path}")
     if args.call is None:
-        print(notable_text(m))
+        if not written:
+            print(notable_text(m))
         return 0
-    column = args.column or ("stack" if "stack" in m.columns else m.columns[-1])
+    column = resolve_column(m, args.column)
     if column not in m.observations or args.call not in m.observations[column]:
         print(f"choose a call from {[c.id for c in m.calls]} and a column from {list(m.observations)}")
         return 2
@@ -323,13 +392,21 @@ def cmd_show(args: argparse.Namespace) -> int:
 
 
 def cmd_warm(args: argparse.Namespace) -> int:
-    check_live_posture(user_config(), None)  # warm spawns a child too: same refusals as run (ARCH-F9)
+    if getattr(args, "check", False):  # read-only preflight: spawns nothing, downloads nothing
+        settings = build_settings(args)
+        warm = runner.is_warm(settings)
+        print(f"{'warm' if warm else 'COLD'}: runtime cache {settings.warm_cache} (temp dir {settings.temp_base})"
+              + ("" if warm else "; run `hermes provingground warm` in this same shell (same TMPDIR) first"))
+        return 0 if warm else 3
+    check_live_posture(user_config(), None)  # warm spawns a child too: same refusals as run
     settings = build_settings(args)
     print(runner.WARM_DISCLOSURE.format(cache=settings.warm_cache), flush=True)
     runner.install_cancellation()
     run = runner.warm_up(settings)
-    print("ready" if runner.is_warm(settings) else f"warm-up did not finish: {run.output_tail[-600:]}")
-    return 0 if runner.is_warm(settings) else 3
+    if not runner.is_warm(settings):
+        raise runner.warm_failure(run)
+    print("ready")
+    return 0
 
 
 def cmd_sweep(args: argparse.Namespace) -> int:
@@ -338,23 +415,52 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     return 0
 
 
+USAGE_EPILOG = """actions:
+  run    (default) drill the directory plugins enabled in your Hermes home, or the demo stack with --fixtures
+  show   the cells with an effect in the latest saved report; `show TC04 --column stack` prints one cell;
+         `show --html PATH` (or --json / --markdown) exports the saved report again
+  warm   prepare the isolated Hermes runtime once (network); `warm --check` only reports whether it is ready
+  sweep  remove stale temporary drill roots left by an interrupted drill (only roots PROVING GROUND marked)
+
+examples:
+  hermes provingground warm
+  hermes provingground --fixtures
+  hermes provingground show TC04 --column stack
+  hermes provingground --calls my-calls.yaml --check --json pg-report.json
+
+exit codes:
+  0    done (with --check: every expect: met)
+  1    unexpected error (one line plus a crash log path)
+  2    refused before running: posture, bad input, unknown name, failed warm-up, no or unreadable report
+  3    a column stopped (timeout, abort), or `warm --check` found the cache cold
+  4    a call was ESCAPED (detected after it ran; that column was stopped)
+  5    --check: an expect: was not met or not evaluated, or no expect: was declared
+  130  cancelled (Ctrl-C, SIGTERM, SIGHUP); every child was stopped
+"""
+
+
 def setup_parser(subparser: argparse.ArgumentParser) -> None:
-    subparser.add_argument("action", nargs="?", default="run", choices=("run", "show", "warm", "sweep"))
+    subparser.formatter_class = argparse.RawDescriptionHelpFormatter
+    subparser.epilog = USAGE_EPILOG
+    subparser.add_argument("action", nargs="?", default="run", choices=("run", "show", "warm", "sweep"),
+                           help="what to do (default: run); see actions below")
     subparser.add_argument("call", nargs="?", default=None, help="test call id for `show`, e.g. TC04")
-    subparser.add_argument("--column", default=None, help="column for `show`: baseline, solo:<plugin>, stack")
+    subparser.add_argument("--column", default=None,
+                           help="column for `show`: baseline, stack, solo:<plugin> or just the plugin name")
     subparser.add_argument("--fixtures", action="store_true", help="use the bundled three-plugin demo stack")
     subparser.add_argument("--without", action="append", metavar="PLUGIN", help="leave a plugin out (repeatable)")
     subparser.add_argument("--only", action="append", metavar="CALL", help="run only these test calls (repeatable)")
     subparser.add_argument("--calls", default=None, metavar="FILE",
                            help="extra test calls (ids U…) and expect: contracts, same validator and grammar")
-    subparser.add_argument("--check", action="store_true", help="exit 5 when a declared expect: is not met")
+    subparser.add_argument("--check", action="store_true",
+                           help="run: exit 5 unless every declared expect: is met; warm: only report cache state")
     subparser.add_argument("--jobs", type=int, default=3, help="columns run in parallel (default 3)")
     subparser.add_argument("--timeout", type=float, default=120.0, help="seconds per column before it is stopped")
     subparser.add_argument("--json", dest="json_out", metavar="PATH", help="also write the JSON report")
     subparser.add_argument("--markdown", dest="markdown_out", metavar="PATH", help="also write a Markdown report")
     subparser.add_argument("--html", dest="html_out", metavar="PATH", help="also write the HTML report")
-    subparser.add_argument("--hermes-bin", default=None, help="path to the hermes executable")
-    subparser.add_argument("--no-color", action="store_true")
+    subparser.add_argument("--hermes-bin", default=None, help="path to the hermes executable (default: on PATH)")
+    subparser.add_argument("--no-color", action="store_true", help="plain text output")
     subparser.add_argument("--quiet", action="store_true", help="no live table; print only file paths")
     subparser.set_defaults(func=handle_cli)
 
@@ -363,12 +469,38 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {"run": cmd_run, "sho
                                                             "sweep": cmd_sweep}
 
 
+def write_crash_log(exc: BaseException) -> Path | None:
+    """The full traceback goes to a private file; the user sees one line naming it."""
+    text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    name = f"crash-{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.log"
+    for directory in (reports_dir, lambda: Path(tempfile.gettempdir())):
+        try:
+            fd = os.open(directory() / name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            return directory() / name
+        except Exception:
+            continue
+    return None
+
+
 def handle_cli(args: argparse.Namespace) -> int:
+    """Every outcome ends in one readable line and an exit code, never a Python traceback."""
     try:
         return COMMANDS[getattr(args, "action", "run") or "run"](args)
     except safety.Refusal as refusal:
         print(f"{refusal.code}: {refusal.message}")
         return 2
+    except (KeyboardInterrupt, runner.Cancelled):
+        print(f"drill cancelled; cleaned up {runner.cancel_everything()} processes", flush=True)
+        return 130
+    except Exception as exc:
+        if os.environ.get(DEBUG_ENV):
+            raise
+        log = write_crash_log(exc)
+        print(f"DRILL_ERROR: {type(exc).__name__}: {str(exc)[:300]}"
+              + (f" (crash log: {log})" if log else "") + f"; set {DEBUG_ENV}=1 for the traceback")
+        return 1
 
 
 def _slash_args(raw: str) -> argparse.Namespace:
@@ -389,7 +521,7 @@ _ATEXIT_REGISTERED = threading.Event()
 
 def _register_slash_cleanup() -> None:
     """The slash drill runs in a thread of the live Hermes process, where install_cancellation cannot install
-    signal handlers; atexit still kills every live child group and removes every live root (P4 M-04)."""
+    signal handlers; atexit still kills every live child group and removes every live root."""
     if not _ATEXIT_REGISTERED.is_set():
         _ATEXIT_REGISTERED.set()
         atexit.register(runner.cancel_everything)
@@ -424,7 +556,7 @@ def _slash_show(args: argparse.Namespace) -> str:
     if args.call is None:
         body = notable_text(m)
     else:
-        column = args.column or ("stack" if "stack" in m.columns else m.columns[-1])
+        column = resolve_column(m, args.column)
         if column not in m.observations or args.call not in m.observations[column]:
             return f"choose a call from {[c.id for c in m.calls]} and a column from {list(m.observations)}"
         body = report.render_cell_detail(m, column, args.call)

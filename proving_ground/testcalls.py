@@ -1,6 +1,6 @@
 # File: proving_ground/testcalls.py
-# [VERIFIED] ruamel.yaml==0.18.16 is a Hermes core dependency (hermes-agent pyproject.toml:55); YAML(typ="safe", pure=True)
-# is the same loader hermes_yaml.py:22-25 uses. [VERIFIED by the §9.1 run] the rest is pure logic.
+# ruamel.yaml==0.18.16 is a Hermes core dependency (hermes-agent pyproject.toml:55); YAML(typ="safe", pure=True)
+# is the same loader hermes_yaml.py:22-25 uses. The rest is pure logic.
 """Load, validate and render the inert test-call catalog (built-in) and an optional user file (--calls)."""
 from __future__ import annotations
 
@@ -91,23 +91,43 @@ def _expect_from(raw: Any, where: str) -> dict[str, tuple[str, ...]]:
     return out
 
 
-def _template_from(raw: Mapping[str, Any], provenance: str = BUILT_IN) -> CallTemplate:
+def _seed_from(raw: Any, where: str) -> dict[str, str]:
+    seed = raw or {}
+    if not isinstance(seed, Mapping) or not all(isinstance(k, str) and isinstance(v, str) for k, v in seed.items()):
+        raise TestCallError(f"{where}: seed must map sandbox-relative file names to text")
+    return dict(seed)
+
+
+def _template_from(raw: Any, provenance: str = BUILT_IN) -> CallTemplate:
+    """One entry of a test-call file; a user file is external data, so every malformed shape is a TestCallError."""
+    if not isinstance(raw, Mapping):
+        raise TestCallError(f"malformed test call entry: expected a mapping, got {type(raw).__name__}")
     try:
         baseline = raw.get("expect_baseline", "PASSED_THROUGH") if provenance == USER else raw["expect_baseline"]
+        if not isinstance(raw["args"], Mapping):
+            raise TestCallError(f"{raw.get('id')}: args must be a mapping")
         return CallTemplate(id=str(raw["id"]), tool=str(raw["tool"]), subject=str(raw["subject"]),
                             purpose=str(raw["purpose"]), expect_baseline=str(baseline),
-                            args=dict(raw["args"]), seed=dict(raw.get("seed") or {}), provenance=provenance,
-                            expect=_expect_from(raw.get("expect"), str(raw.get("id"))))
-    except (KeyError, TypeError) as exc:
-        raise TestCallError(f"malformed test call entry: {exc}") from exc
+                            args=dict(raw["args"]), seed=_seed_from(raw.get("seed"), str(raw.get("id"))),
+                            provenance=provenance, expect=_expect_from(raw.get("expect"), str(raw.get("id"))))
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        if isinstance(exc, TestCallError):
+            raise
+        raise TestCallError(f"malformed test call entry: {type(exc).__name__}: {exc}") from exc
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
     from ruamel.yaml import YAML
 
-    data = YAML(typ="safe", pure=True).load(path.read_text(encoding="utf-8")) or {}
+    text = path.read_text(encoding="utf-8")
+    try:
+        data = YAML(typ="safe", pure=True).load(text) or {}
+    except Exception as exc:  # ruamel's YAMLError family: the file is not valid YAML
+        raise TestCallError(f"{path}: not valid YAML ({type(exc).__name__})") from exc
     if not isinstance(data, Mapping) or data.get("schema") != SCHEMA:
         raise TestCallError(f"{path}: schema must be {SCHEMA}")
+    if not isinstance(data.get("calls") or [], list):
+        raise TestCallError(f"{path}: calls must be a list")
     return dict(data)
 
 
@@ -206,7 +226,7 @@ def replayable(template: CallTemplate, probe: SandboxContext) -> list[str]:
 def crosscheck_templates(rewrites: Sequence[tuple[str, str, Mapping[str, Any]]],
                          probe: SandboxContext) -> tuple[list[CallTemplate], list[tuple[str, tuple[str, ...]]]]:
     """Pure: (source id, tool, normalized final args) -> (replayable XC-<id> templates, unreplayable [(id, reasons)]).
-    A third-party-authored rewrite that fails the closed grammar is never executed (ARCH-F3)."""
+    A third-party-authored rewrite that fails the closed grammar is never executed."""
     keep, refused = [], []
     for source, tool, args in rewrites:
         template = CallTemplate(id=f"XC-{source}", tool=tool, subject="final args of a rewritten call",
