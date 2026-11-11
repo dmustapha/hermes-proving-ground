@@ -569,21 +569,30 @@ def _required_env(manifest: Mapping[str, Any]) -> tuple[str, ...]:
 
 
 def load_order(subjects: Sequence[PluginSource]) -> list[PluginSource]:
-    """requires_plugins first (topological), alphabetical ties; mirrors plugins_manifest.py:246-283 (ARCH-F16)."""
-    by_key, ordered, seen = {s.key: s for s in subjects}, [], set()
+    """Mirror of plugins_manifest.resolve_plugin_load_order (plugins_manifest.py:237-283): graphlib layers, each
+    layer alphabetical, so a plugin's requires_plugins load first; a cycle falls back to alphabetical for all
+    (ARCH-F16). The child reports the order it really used and a mismatch becomes a report note (point d)."""
+    import graphlib
 
-    def visit(source: PluginSource, stack: frozenset[str]) -> None:
-        if source.key in seen or source.key in stack:
-            return
-        for dep in sorted(source.requires):
-            if dep in by_key:
-                visit(by_key[dep], stack | {source.key})
-        seen.add(source.key)
-        ordered.append(source)
+    by_key = {s.key: s for s in subjects}
+    graph = {k: {d for d in by_key[k].requires if d in by_key and d != k} for k in sorted(by_key)}
+    sorter = graphlib.TopologicalSorter(graph)
+    try:
+        sorter.prepare()
+    except graphlib.CycleError:
+        return [by_key[k] for k in sorted(by_key)]
+    ordered: list[str] = []
+    while sorter.is_active():
+        ready = sorted(sorter.get_ready())
+        ordered.extend(ready)
+        sorter.done(*ready)
+    return [by_key[k] for k in ordered]
 
-    for source in sorted(subjects, key=lambda s: s.key):
-        visit(source, frozenset())
-    return ordered
+
+def _requires(manifest: Mapping[str, Any]) -> tuple[str, ...]:
+    """requires_plugins items are ids or {id, version_range} (plugins_manifest.py:123-130)."""
+    ids = [item.get("id") if isinstance(item, Mapping) else item for item in manifest.get("requires_plugins") or []]
+    return tuple(str(i) for i in ids if isinstance(i, str) and i)
 
 
 def discover_subjects(hermes_home: Path, config: Mapping[str, Any]) -> tuple[list[PluginSource], list[tuple[str, str]]]:
@@ -599,7 +608,7 @@ def discover_subjects(hermes_home: Path, config: Mapping[str, Any]) -> tuple[lis
             continue
         settings = (entries.get(key) or {}) if isinstance(entries, Mapping) else {}
         manifest = _manifest(path)
-        requires = tuple(str(r) for r in manifest.get("requires_plugins") or [])
+        requires = _requires(manifest)
         subjects.append(PluginSource(key, path, settings or None, _required_env(manifest), requires))
     return load_order(subjects), skipped
 

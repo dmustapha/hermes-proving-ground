@@ -84,6 +84,7 @@ class ColumnRun:
     scripted_steps: int = 0
     stray_escapes: tuple[tuple[str, ...], ...] = ()  # escapes whose tool_call_id matched no drill call
     bytecode_off: bool | None = None  # the child's sys.dont_write_bytecode, from its activated event
+    child_order: tuple[str, ...] | None = None  # subject plugins in the order the child loaded them
 
 
 @dataclass(frozen=True)
@@ -138,6 +139,7 @@ class DrillConditions:
     leftover_roots: int = -1
     coverage: str = ""
     baseline_note: str = "baseline = Hermes core with only PROVING GROUND enabled (bundled plugins not enumerated)"
+    order_note: str = ""  # set when a child loaded its plugins in another order than PROVING GROUND computed
 
 
 @dataclass(frozen=True)
@@ -254,8 +256,11 @@ def column_from_events(name: str, plugins: tuple[str, ...], plan_calls: Sequence
     connects = tuple((str(e.get("address")), bool(e.get("loopback"))) for e in events if e.get("ev") == "connect")
     steps = sum(1 for e in events if e.get("ev") == "llm_execution")
     activated = next((e for e in events if e.get("ev") == "activated"), {})
+    loaded = next((e for e in events if e.get("ev") == "plugins_loaded"), {})
+    order = tuple(str(k) for k in loaded["order"]) if isinstance(loaded.get("order"), list) else None
     return ColumnRun(name, plugins, observations, abort_reason, wall_s, connects,
-                     unconfirmed_plugins(plugins, events), steps, stray_escapes, activated.get("dont_write_bytecode"))
+                     unconfirmed_plugins(plugins, events), steps, stray_escapes, activated.get("dont_write_bytecode"),
+                     order)
 
 
 def _text(obs: CallObservation) -> str:
@@ -459,6 +464,14 @@ def _na_cells(key: str, calls: Sequence[CallInfo]) -> dict[str, Cell]:
                        note="declares requires_env; the sandbox has no credentials") for c in calls}
 
 
+def order_note(columns: Sequence[ColumnRun]) -> str:
+    """Point d: compare each child's reported load order with the order PROVING GROUND gave it."""
+    off = [c for c in columns if c.child_order is not None and not c.load_failed
+           and c.child_order != tuple(k for k in c.plugins if k in c.child_order)]
+    return "; ".join(f"{c.name}: the child loaded {', '.join(c.child_order)}, PROVING GROUND computed "
+                     f"{', '.join(c.plugins)} (attribution names candidates in the computed order)" for c in off)
+
+
 def coverage_line(columns: Sequence[ColumnRun], needs_env: Sequence[str], skipped: Sequence[tuple[str, str]]) -> str:
     solos = [c for c in columns if c.name.startswith("solo:")]
     failed = sorted({k for c in columns for k in c.load_failed})
@@ -495,6 +508,7 @@ def build_matrix(columns: Sequence[ColumnRun], baseline_repeat: ColumnRun | None
     steps = sum(c.scripted_steps for c in list(columns) + list(crosscheck.values()))
     extra = {"model": f"NOT CALLED (scripted turn: {steps} llm_execution steps answered by PROVING GROUND, "
                       "0 provider calls)", "coverage": coverage_line(columns, needs_env, skipped),
+             "order_note": order_note(list(columns) + list(crosscheck.values())),
              **dict(conditions_extra or {})}
     conditions = DrillConditions(hermes_version, len(calls), len(solos), order, len(connects),
                                  sum(1 for _a, loop in connects if not loop), wall_s, started_at, **extra)

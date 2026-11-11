@@ -58,9 +58,22 @@ def _register_drill_child(ctx: Any) -> None:
     for name in HOOK_NAMES:
         ctx.register_hook(name, hooks[name])
     probe = getattr(ctx, "has_plugin", None)  # public PluginContext.has_plugin (plugins_context.py:57-63)
-    ctx.register_middleware("llm_execution", injector.make_llm_execution(state_dir, log, probe))
+    ctx.register_middleware("llm_execution", injector.make_llm_execution(state_dir, log, probe, _load_order_probe(ctx)))
     observer.install_socket_audit(log)
     log.write("activated", calls=len(plan["calls"]), dont_write_bytecode=sys.dont_write_bytecode)
+
+
+def _load_order_probe(ctx: Any) -> Callable[[], list[str]]:
+    """Drill child only, read-only: the manager's plugin registry is insertion-ordered by load, the order hooks fire
+    in (hermes_cli/plugins_loader.py:359, plugins_activation.py:84-90 iterate it the same way). There is no public
+    accessor, so this reads the private mapping behind PluginContext.has_plugin; any failure reports "unknown"."""
+    def order() -> list[str]:
+        registry = getattr(getattr(ctx, "_manager", None), "_plugins", None)
+        if registry is None:
+            raise LookupError("no plugin registry on this Hermes")
+        return list(registry)
+
+    return order
 
 
 def register(ctx: Any) -> None:

@@ -156,6 +156,7 @@ def conditions_lines(m: mx.Matrix) -> list[str]:
             f"network seen inside the child Hermes process (not its subprocesses): {network}",
             f"sandbox: {c.sandbox}", f"Hermes: {c.hermes_version}", c.baseline_note,
             f"load order given to the child (requires_plugins first, then alphabetical): {', '.join(c.load_order) or 'none'}",
+            *([f"load order mismatch: {c.order_note}"] if c.order_note else []),
             f"coverage: {c.coverage or 'n/a'}", f"cleanup: {left}",
             f"wall time: {c.wall_s:.1f}s · started {c.started_at}"]
 

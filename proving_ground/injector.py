@@ -55,7 +55,8 @@ def write_abort(state_dir: Path, log: EventLog, reason: str) -> None:
 
 
 def scripted_reply(request: Any, state_dir: Path, log: EventLog,
-                   loaded_probe: Callable[[str], bool] | None = None) -> dict[str, Any]:
+                   loaded_probe: Callable[[str], bool] | None = None,
+                   order_probe: Callable[[], Any] | None = None) -> dict[str, Any]:
     abort_path = state_dir / ABORT_FILENAME
     if abort_path.exists():
         reason = abort_path.read_text(encoding="utf-8").strip() or "ABORTED"
@@ -72,11 +73,21 @@ def scripted_reply(request: Any, state_dir: Path, log: EventLog,
         expected = [str(k) for k in plan.get("subjects") or []]
         loaded = [k for k in expected if _safe_probe(loaded_probe, k)]
         log.write("plugins_loaded", expected=expected, loaded=loaded,
-                  missing=[k for k in expected if k not in loaded])
+                  missing=[k for k in expected if k not in loaded], order=_child_order(order_probe, expected))
     if done < len(calls):
         return tool_call_body(done, calls[done])
     log.write("done", steps=done)
     return final_body(DONE_SENTINEL)
+
+
+def _child_order(probe: Callable[[], Any] | None, expected: list[str]) -> list[str] | None:
+    """The subject plugins in the order the child actually loaded them; None when the child cannot say."""
+    if probe is None:
+        return None
+    try:
+        return [str(k) for k in probe() if str(k) in expected]
+    except Exception:
+        return None
 
 
 def _safe_probe(probe: Callable[[str], bool], key: str) -> bool:
@@ -86,11 +97,11 @@ def _safe_probe(probe: Callable[[str], bool], key: str) -> bool:
         return False  # unknown load state is reported as LOAD FAILED, never as loaded
 
 
-def make_llm_execution(state_dir: Path, log: EventLog,
-                       loaded_probe: Callable[[str], bool] | None = None) -> Callable[..., Any]:
+def make_llm_execution(state_dir: Path, log: EventLog, loaded_probe: Callable[[str], bool] | None = None,
+                       order_probe: Callable[[], Any] | None = None) -> Callable[..., Any]:
     def llm_execution(request: Any = None, next_call: Any = None, **_kwargs: Any) -> Any:
         try:
-            return _completion(scripted_reply(request, state_dir, log, loaded_probe))
+            return _completion(scripted_reply(request, state_dir, log, loaded_probe, order_probe))
         except Exception as exc:  # middleware fails open; an exception here would reach the provider
             write_abort(state_dir, log, f"INJECTOR_ERROR:{type(exc).__name__}")
             return _completion(final_body(f"{ABORT_SENTINEL} INJECTOR_ERROR"))
