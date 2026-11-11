@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import datetime as dt
 import json
 import os
@@ -21,6 +22,10 @@ from . import matrix, report, runner, safety, testcalls
 PG_SOURCE = Path(__file__).resolve().parent.parent
 REPORTS_SUBDIR = "reports"
 LATEST = "latest.json"
+LAST_ERROR = "last-error.json"
+REPORT_MAX_BYTES = 8 * 1024 * 1024  # debug P4 M-03: a saved report never exceeds this; long strings are clipped
+REPORTS_KEPT = 20  # the newest report-*.json files kept; older ones are removed on save
+CLIP_MARK = " …[clipped by PROVING GROUND: report size cap]"
 FIXTURE_KEYS = ("fx_guard", "fx_rewriter", "fx_trimmer")
 
 
@@ -157,13 +162,67 @@ def reports_dir() -> Path:
     return path
 
 
+def _clip(value: Any, limit: int) -> Any:
+    if isinstance(value, str) and len(value) > limit:
+        return value[:limit] + CLIP_MARK
+    if isinstance(value, dict):
+        return {k: _clip(v, limit) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clip(v, limit) for v in value]
+    return value
+
+
+def bounded_report_json(m: matrix.Matrix, max_bytes: int = REPORT_MAX_BYTES) -> str:
+    """The report JSON, with the longest strings clipped (and marked) until it fits *max_bytes* (P4 M-03)."""
+    data, limit = report.matrix_to_dict(m), 1 << 20
+    text = json.dumps(data, indent=2, ensure_ascii=False)
+    while len(text.encode("utf-8")) > max_bytes and limit >= 64:
+        text, limit = json.dumps(_clip(data, limit), indent=2, ensure_ascii=False), limit // 4
+    return text
+
+
+def _prune_reports(directory: Path, keep: int = REPORTS_KEPT) -> None:
+    for old in sorted(directory.glob("report-*.json"))[:-keep]:
+        old.unlink(missing_ok=True)
+
+
 def save(m: matrix.Matrix) -> Path:
-    data = json.dumps(report.matrix_to_dict(m), indent=2, ensure_ascii=False)
+    data = bounded_report_json(m)
     stamp = m.conditions.started_at.replace(":", "").replace("+", "Z")
     target = reports_dir() / f"report-{stamp}.json"
     target.write_text(data, encoding="utf-8")
     (reports_dir() / LATEST).write_text(data, encoding="utf-8")
+    _prune_reports(reports_dir())
     return target
+
+
+def record_drill_failure(exc: BaseException) -> None:
+    """A failed slash drill leaves last-error.json, so `show` never serves the previous report as current (P4 M-01)."""
+    reason = {"code": getattr(exc, "code", type(exc).__name__), "message": str(getattr(exc, "message", exc))[:2000], "at": now_iso()}
+    try:
+        (reports_dir() / LAST_ERROR).write_text(json.dumps(reason), encoding="utf-8")
+    except Exception:  # no plugin storage: nothing to record into; show then reports what is saved
+        return
+
+
+def clear_drill_failure() -> None:
+    try:
+        (reports_dir() / LAST_ERROR).unlink(missing_ok=True)
+    except Exception:
+        return
+
+
+def last_drill_failure() -> str | None:
+    """"last drill failed: <reason>" when the newest drill failed after the latest saved report, else None."""
+    try:
+        directory = reports_dir()
+        error, latest = directory / LAST_ERROR, directory / LATEST
+        if not error.is_file() or (latest.is_file() and latest.stat().st_mtime > error.stat().st_mtime):
+            return None
+        data = json.loads(error.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return f"last drill failed: {data.get('code')}: {data.get('message')} (at {data.get('at')})"
 
 
 def load_latest() -> matrix.Matrix:
@@ -248,6 +307,9 @@ def notable_text(m: matrix.Matrix) -> str:
 
 
 def cmd_show(args: argparse.Namespace) -> int:
+    failure = last_drill_failure()
+    if failure:
+        print(failure + "\nthe report below is from the previous successful drill")
     m = load_latest()
     if args.call is None:
         print(notable_text(m))
@@ -322,27 +384,60 @@ def _slash_args(raw: str) -> argparse.Namespace:
 _SLASH_LOCK = threading.Lock()
 
 
+_ATEXIT_REGISTERED = threading.Event()
+
+
+def _register_slash_cleanup() -> None:
+    """The slash drill runs in a thread of the live Hermes process, where install_cancellation cannot install
+    signal handlers; atexit still kills every live child group and removes every live root (P4 M-04)."""
+    if not _ATEXIT_REGISTERED.is_set():
+        _ATEXIT_REGISTERED.set()
+        atexit.register(runner.cancel_everything)
+
+
 def _slash_drill(args: argparse.Namespace, platform: str | None) -> None:
     try:
         m, _note = run_matrix(args, platform=platform)
         save(m)
-    except Exception:
-        return  # the saved report (or its absence) is what /provingground show reports
+    except BaseException as exc:  # recorded, so show reports the failure instead of a stale report
+        record_drill_failure(exc)
     finally:
         _SLASH_LOCK.release()
+
+
+def _start_slash_drill(args: argparse.Namespace, platform: str | None) -> None:
+    clear_drill_failure()
+    _register_slash_cleanup()
+    try:
+        threading.Thread(target=_slash_drill, args=(args, platform), daemon=True, name="provingground-drill").start()
+    except BaseException:
+        _SLASH_LOCK.release()  # a thread that never started never releases the lock itself
+        raise
+
+
+def _slash_show(args: argparse.Namespace) -> str:
+    failure = last_drill_failure()
+    try:
+        m = load_latest()
+    except safety.Refusal as refusal:
+        return "\n".join(filter(None, [failure, f"{refusal.code}: {refusal.message}"]))
+    if args.call is None:
+        body = notable_text(m)
+    else:
+        column = args.column or ("stack" if "stack" in m.columns else m.columns[-1])
+        if column not in m.observations or args.call not in m.observations[column]:
+            return f"choose a call from {[c.id for c in m.calls]} and a column from {list(m.observations)}"
+        body = report.render_cell_detail(m, column, args.call)
+    if failure:
+        return f"{failure}\nthe report below is from the previous successful drill ({m.conditions.started_at}):\n{body}"
+    return body
 
 
 def handle_slash(raw_args: str = "", *, platform: str = "", session_id: str = "", **_: Any) -> str:
     args = _slash_args(raw_args or "")
     try:
         if args.action == "show":
-            m = load_latest()
-            if args.call is None:
-                return notable_text(m)
-            column = args.column or ("stack" if "stack" in m.columns else m.columns[-1])
-            if column not in m.observations or args.call not in m.observations[column]:
-                return f"choose a call from {[c.id for c in m.calls]} and a column from {list(m.observations)}"
-            return report.render_cell_detail(m, column, args.call)
+            return _slash_show(args)
         note = check_live_posture(user_config(), platform or None)
         settings = build_settings(args)
         if not runner.is_warm(settings):
@@ -350,8 +445,7 @@ def handle_slash(raw_args: str = "", *, platform: str = "", session_id: str = ""
                     "by Hermes's own installer); the slash command never warms inside your session.")
         if not _SLASH_LOCK.acquire(blocking=False):
             return "A drill is already running; `/provingground show` reads the latest saved report."
-        threading.Thread(target=_slash_drill, args=(args, platform or None), daemon=True,
-                         name="provingground-drill").start()
+        _start_slash_drill(args, platform or None)
         return "\n".join(filter(None, ["Drill started in the background (about 30 s; model: NOT CALLED). "
                                         "Read it with `/provingground show` or `hermes provingground show`.", note]))
     except safety.Refusal as refusal:
