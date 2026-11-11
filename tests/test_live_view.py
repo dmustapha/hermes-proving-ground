@@ -75,8 +75,9 @@ def test_table_fits_a_120_column_terminal_without_cropping() -> None:
     for width in (120, 100):
         text = report.render_terminal(m, color=False, width=width)
         assert max(len(line) for line in text.splitlines()) <= width
-        table = text.split("synthetic inputs in a sandbox.")[1].split(matrix.tally(m))[0]
+        table = text.split(matrix.tally(m))[1].split("• attribution")[0]
         assert "FULL STACK" in table and table.count("BLOCKED") == 2 and table.count("REWROTE") == 2
+        assert table.count("unseen") == 1  # the finding's cell is marked in-cell (it may wrap: "unseen by fx_guard")
         # TC05: core truncation reads RESULT CHANGED (core) in all 5 columns, not only the baseline
         assert table.count("RESULT CHANGED") == 7 and table.count("PASSED THROUGH") == 14
 

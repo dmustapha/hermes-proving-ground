@@ -64,7 +64,28 @@ def test_notable_cells_lists_effects() -> None:
 def test_rewrite_unseen_finding_leads_with_plain_words() -> None:
     # PRD 6.1 scene 3 and 1.8: the harm in plain words comes before the REWRITE_UNSEEN_BY token, in every format.
     m = fixture_like_matrix()
-    lead = "In plain words: fx_guard approved a command it never saw, and that command ran."
+    lead = ("In plain words: fx_guard checked the original command and never saw the rewritten one, and the "
+            "rewritten command ran.")
     for text in (report.render_terminal(m, color=False), report.render_markdown(m), report.render_html(m)):
-        assert lead in text
+        assert lead in text and "approved" not in text  # Hermes's approval system is a different thing
         assert text.index(lead) < text.index("REWRITE_UNSEEN_BY")
+
+
+def test_findings_lead_the_matrix_and_the_conditions_follow_it() -> None:
+    # The finding comes first, its cell carries the finding in-cell, and the drill-conditions box sits below.
+    m = fixture_like_matrix()
+    for text, header in ((report.render_terminal(m, color=False, width=160), "FULL STACK"),
+                         (report.render_markdown(m), "| test call |"), (report.render_html(m), "<thead>")):
+        assert text.index("REWRITE_UNSEEN_BY") < text.index(header) < text.index("model: NOT CALLED")
+    assert "| REWROTE · unseen by fx_guard |" in report.render_markdown(m)
+    assert "<span class='mark'>· unseen by fx_guard</span>" in report.render_html(m)
+    assert "<details class='box small'><summary>Drill conditions</summary>" in report.render_html(m)
+    assert report.finding_marks(m) == {("stack", "TC03"): "unseen by fx_guard"}
+
+
+def test_a_drill_without_findings_says_so_above_the_matrix() -> None:
+    from dataclasses import replace
+
+    text = report.render_markdown(replace(fixture_like_matrix(), findings=()))
+    assert "no cross-plugin finding recorded" in text and "· unseen by" not in text
+    assert text.index("no cross-plugin finding") < text.index("| test call |")
