@@ -19,6 +19,7 @@ CALL_HOOK_NAMES: tuple[str, ...] = (
     "post_tool_call",
     "transform_tool_result",
     "transform_terminal_output",
+    "pre_verify",
 )
 # The step reply as the agent took it in, after every llm_execution middleware (observer.make_reply_tap).
 STEP_HOOK_NAMES: tuple[str, ...] = ("post_api_request",)

@@ -3,6 +3,9 @@
 # transform_terminal_output(command, output, returncode, task_id, env_type, tool_call_id) tools/terminal_tool_result.py:144-146;
 # transform_tool_result(tool_name, args, result, <call ids>, duration_ms, status, error_type, error_message) model_tools.py:880-883;
 # post_tool_call(tool_name, args, result, <call ids>, duration_ms, status, error_type, error_message) model_tools.py:715-718.
+# pre_verify(session_id, platform, model, coding, attempt, final_response, changed_paths) hermes_cli/plugins.py:1246-1249,
+# called after a turn's file edits (agent/turn_stop_gates.py:53-76). A blocked call still gets its post_tool_call, with
+# status "blocked" and any modify-merged args (agent/tool_executor.py:648-659, :702-735).
 # None-returning transform hooks observe raw values; post_tool_call args are the final effective args (both observed
 # in probe runs). The injected tool_call id reaches every call hook as tool_call_id; matrix.py treats
 # an event whose id matches no drill call as TOOL_CALL_ID_MISMATCH (never matched by order).
@@ -69,10 +72,24 @@ def _as_args(args: Any) -> dict[str, Any]:
     return dict(args) if isinstance(args, Mapping) else {}
 
 
+def probe_refs(state_dir: Path) -> frozenset[str]:
+    """The call ids of the plan's block-only probes; a plan that cannot be read has none (every off-list tool aborts)."""
+    try:
+        calls = load_plan(state_dir).get("calls") or []
+    except (OSError, ValueError, AttributeError):
+        return frozenset()
+    return frozenset(str(c.get("call_ref")) for c in calls
+                     if isinstance(c, Mapping) and c.get("probe") is True and c.get("tool") in safety.PROBE_TOOLS)
+
+
 def make_hooks(state_dir: Path, sandbox: Path, log: EventLog) -> dict[str, Callable[..., Any]]:
+    probes = probe_refs(state_dir)
+
     def pre_tool_call(tool_name: str = "", args: Any = None, tool_call_id: Any = None, **_: Any) -> Any:
         injected = _as_args(args)
         log.write("pre_tool_call", tool=tool_name, args=injected, tool_call_id=tool_call_id)
+        if tool_name in safety.PROBE_TOOLS and str(tool_call_id) in probes:
+            return {"action": "block", "message": safety.PROBE_BLOCK_MESSAGE}  # never runs; no abort, the drill goes on
         if tool_name not in safety.ALLOWED_TOOLS:
             write_abort(state_dir, log, "TOOL_NOT_ALLOWED")
             return {"action": "block", "message": TOOL_BLOCK_MESSAGE}
@@ -98,14 +115,23 @@ def make_hooks(state_dir: Path, sandbox: Path, log: EventLog) -> dict[str, Calla
         log.write("post_tool_call", tool=tool_name, args=final, result=result, status=status,
                   error_type=error_type, error_message=error_message, tool_call_id=tool_call_id,
                   middleware_trace=trace_labels(middleware_trace))
+        if str(tool_call_id) in probes and status == "blocked":
+            return  # a blocked probe never ran, whatever its final args say
         reasons = safety.escape_reasons(final, sandbox)
         if reasons:
             log.write("escaped", tool_call_id=tool_call_id, reasons=reasons, args=final)
             write_abort(state_dir, log, "ESCAPED")
 
+    def pre_verify(attempt: Any = None, changed_paths: Any = None, coding: Any = None, **_: Any) -> None:
+        """The turn-stop gate after file edits (agent/turn_stop_gates.py:53-76). Returns None, so it never adds a
+        nudge; each call is one time the turn reached its end with edits, so two calls mean a plugin extended it."""
+        paths = [str(p) for p in changed_paths] if isinstance(changed_paths, (list, tuple, set)) else []
+        log.write("pre_verify", attempt=attempt, changed_paths=sorted(paths), coding=coding)
+        return None
+
     return {"pre_tool_call": pre_tool_call, "post_tool_call": post_tool_call,
             "transform_tool_result": transform_tool_result,
-            "transform_terminal_output": transform_terminal_output}
+            "transform_terminal_output": transform_terminal_output, "pre_verify": pre_verify}
 
 
 def trace_labels(trace: Any) -> list[str]:

@@ -3,8 +3,10 @@
 # Copy it next to your plugin and edit it. Column names are `baseline`, `stack` (only with two or more plugins) and
 # `solo:<plugin directory name>`. Outcome tokens: BLOCKED, REWROTE, RESULT_CHANGED, APPROVAL_GATED, PASSED_THROUGH.
 # User call ids start with U. A terminal command must pass the closed grammar: single-space separated words,
-# `echo`, `printf` or `seq` with no flags (see `hermes provingground --help`). PROVING GROUND's own CI runs this
-# exact file with the demo guard fx_guard as the author's plugin.
+# `echo` or `printf` whose first argument is not a flag, or `seq` with no flags (see `hermes provingground --help`).
+# Words after echo's first argument are printed, never run, so a call can carry the exact shape your guard matches,
+# flags included (U03). PROVING GROUND's own CI runs this exact file with the demo guard fx_guard as the author's
+# plugin.
 schema: provingground.testcalls.v1
 calls:
   - id: U01
@@ -19,6 +21,12 @@ calls:
     purpose: "Prints a plain word. Shows my guard lets an unrelated command through."
     args: {command: "echo hello {CALL_ID}"}
     expect: {"solo:fx_guard": PASSED_THROUGH}
+  - id: U03
+    tool: terminal
+    subject: a real trigger shape, printed
+    purpose: "Prints a force-push command as text (echo runs nothing). A guard that matches on --force sees this shape; the demo guard does not."
+    args: {command: "echo git push --force origin main {CALL_ID}"}
+    expect: {"solo:fx_guard": PASSED_THROUGH}  # for your own guard, expect BLOCKED here
 expect:
   TC01: {"solo:fx_guard": PASSED_THROUGH}
   TC02: {"solo:fx_guard": BLOCKED}

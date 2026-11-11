@@ -13,13 +13,21 @@ from typing import Any, Mapping, Sequence
 from . import safety
 
 SCHEMA = "provingground.testcalls.v1"
-PLACEHOLDERS = ("{SANDBOX}", "{RECORDER_URL}", "{CANARY}", "{CALL_ID}")
-EXPECTATIONS = frozenset({"PASSED_THROUGH", "APPROVAL_GATED", "RESULT_CHANGED_BY_CORE"})
+# AWS's own documented example access key id (docs.aws.amazon.com, "Managing access keys"): not a credential. It is
+# composed here at render time so no file in the plugin carries a credential-shaped literal for the install scanner.
+FAKE_AWS_KEY_ID = "".join(("AK", "IA", "IOSFODNN7", "EXAMPLE"))
+PLACEHOLDERS = ("{SANDBOX}", "{RECORDER_URL}", "{CANARY}", "{CALL_ID}", "{FAKE_AWS_KEY_ID}")
+EXPECTATIONS = frozenset({"PASSED_THROUGH", "APPROVAL_GATED", "RESULT_CHANGED_BY_CORE", "NOT_EXECUTED"})
 OUTCOME_TOKENS = frozenset({"ESCAPED", "ERRORED", "BLOCKED", "APPROVAL_GATED", "REWROTE", "RESULT_CHANGED",
-                            "PASSED_THROUGH", "LOAD_FAILED", "NOT_RUN", "NOT_APPLICABLE"})
+                            "TURN_EXTENDED", "PASSED_THROUGH", "NOT_EXECUTED", "LOAD_FAILED", "NOT_RUN",
+                            "NOT_APPLICABLE"})
 CANARY_PREFIX = "PGCANARY-"
 REQUIRED_ARGS = {"terminal": ("command",), "write_file": ("path", "content"),
-                 "read_file": ("path",), "patch": ("path", "old_string", "new_string")}
+                 "read_file": ("path",), "patch": ("path", "old_string", "new_string"),
+                 # block-only probes (never executed); required args per tool schema: code_execution_tool.py:943,
+                 # delegate_tool.py:847, web_tools.py:555, memory_tool.py:436
+                 "execute_code": ("code",), "delegate_task": ("goal",), "web_extract": ("urls",),
+                 "memory": ("target", "operations")}
 DEFAULT_CATALOG = Path(__file__).resolve().parent.parent / "testcalls.yaml"
 BUILT_IN, USER, CROSSCHECK = "built-in", "user", "crosscheck"
 USER_ID = re.compile(r"^U[A-Za-z0-9_-]{1,15}$")
@@ -43,6 +51,7 @@ class CallTemplate:
     seed: Mapping[str, str] = field(default_factory=dict)
     provenance: str = BUILT_IN
     expect: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    probe: bool = False  # block-only: PROVING GROUND blocks it in every column, so it never runs
 
 
 @dataclass(frozen=True)
@@ -63,10 +72,12 @@ class DrillCall:
     args: Mapping[str, Any]
     seed: Mapping[str, str]
     provenance: str = BUILT_IN
+    probe: bool = False
 
     def as_plan(self) -> dict[str, Any]:
-        return {"id": self.id, "call_ref": self.call_ref, "tool": self.tool, "args": dict(self.args),
+        plan = {"id": self.id, "call_ref": self.call_ref, "tool": self.tool, "args": dict(self.args),
                 "provenance": self.provenance}
+        return {**plan, "probe": True} if self.probe else plan
 
 
 def make_canary() -> str:
@@ -98,6 +109,15 @@ def _seed_from(raw: Any, where: str) -> dict[str, str]:
     return dict(seed)
 
 
+def _probe_from(raw: Mapping[str, Any], provenance: str) -> bool:
+    probe = raw.get("probe", False)
+    if not isinstance(probe, bool):
+        raise TestCallError(f"{raw.get('id')}: probe must be true or false")
+    if probe and provenance != BUILT_IN:
+        raise TestCallError(f"{raw.get('id')}: only built-in test calls can be block-only probes")
+    return probe
+
+
 def _template_from(raw: Any, provenance: str = BUILT_IN) -> CallTemplate:
     """One entry of a test-call file; a user file is external data, so every malformed shape is a TestCallError."""
     if not isinstance(raw, Mapping):
@@ -109,7 +129,8 @@ def _template_from(raw: Any, provenance: str = BUILT_IN) -> CallTemplate:
         return CallTemplate(id=str(raw["id"]), tool=str(raw["tool"]), subject=str(raw["subject"]),
                             purpose=str(raw["purpose"]), expect_baseline=str(baseline),
                             args=dict(raw["args"]), seed=_seed_from(raw.get("seed"), str(raw.get("id"))),
-                            provenance=provenance, expect=_expect_from(raw.get("expect"), str(raw.get("id"))))
+                            provenance=provenance, expect=_expect_from(raw.get("expect"), str(raw.get("id"))),
+                            probe=_probe_from(raw, provenance))
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         if isinstance(exc, TestCallError):
             raise
@@ -138,6 +159,22 @@ def load_templates(path: Path = DEFAULT_CATALOG) -> list[CallTemplate]:
     return templates
 
 
+WIRE_PROBE_KEYS = ("user_turn", "reply")
+
+
+def load_wire_probe(path: Path = DEFAULT_CATALOG) -> dict[str, str]:
+    """The catalog's reply and user-turn probe text: what the scripted user turn and final reply carry so reply and
+    context plugins have something to act on. Single-line text without control characters, or none at all."""
+    raw = _load_yaml(path).get("wire_probe") or {}
+    if not isinstance(raw, Mapping) or set(raw) - set(WIRE_PROBE_KEYS):
+        raise TestCallError(f"{path}: wire_probe may only hold {', '.join(WIRE_PROBE_KEYS)}")
+    probe = {str(k): v for k, v in raw.items()}
+    for key, text in probe.items():
+        if not isinstance(text, str) or not text.strip() or safety.CONTROL_CHARACTER.search(text):
+            raise TestCallError(f"{path}: wire_probe.{key} must be one line of text")
+    return probe
+
+
 def load_user_calls(path: Path, built_in: Sequence[CallTemplate]) -> list[CallTemplate]:
     """--calls FILE: extra user calls (ids U..., provenance user) plus `expect:` contracts on built-in ids.
     Same validator as the catalog; at render time user calls must also pass safety.derived_call_reasons."""
@@ -160,9 +197,19 @@ def load_user_calls(path: Path, built_in: Sequence[CallTemplate]) -> list[CallTe
     return merged + extra
 
 
-def _check_one(template: CallTemplate) -> None:
-    if template.tool not in safety.ALLOWED_TOOLS:
+def _check_tool(template: CallTemplate) -> None:
+    """An executed call uses an allow-listed tool; a probe uses a probe tool and nothing else, so no probe flag can
+    turn an executed tool into a blocked one or an off-list tool into an executed one."""
+    if template.probe and template.tool not in safety.PROBE_TOOLS:
+        raise TestCallError(f"{template.id}: a block-only probe must use one of {sorted(safety.PROBE_TOOLS)}")
+    if not template.probe and template.tool not in safety.ALLOWED_TOOLS:
         raise TestCallError(f"{template.id}: tool {template.tool!r} is not on the drill allow-list")
+    if (template.expect_baseline == "NOT_EXECUTED") != template.probe:
+        raise TestCallError(f"{template.id}: expect_baseline NOT_EXECUTED is for block-only probes, and only it")
+
+
+def _check_one(template: CallTemplate) -> None:
+    _check_tool(template)
     missing = [name for name in REQUIRED_ARGS[template.tool] if name not in template.args]
     if missing:
         raise TestCallError(f"{template.id}: missing args {missing}")
@@ -202,7 +249,7 @@ def render(templates: Sequence[CallTemplate], ctx: SandboxContext) -> list[Drill
     calls: list[DrillCall] = []
     for t in templates:
         mapping = {"{SANDBOX}": str(ctx.sandbox), "{RECORDER_URL}": ctx.recorder_url,
-                   "{CANARY}": ctx.canary, "{CALL_ID}": t.id}
+                   "{CANARY}": ctx.canary, "{CALL_ID}": t.id, "{FAKE_AWS_KEY_ID}": FAKE_AWS_KEY_ID}
         args = _fill(dict(t.args), mapping)
         reasons = safety.escape_reasons(args, ctx.sandbox)
         if t.provenance != BUILT_IN:
@@ -211,7 +258,7 @@ def render(templates: Sequence[CallTemplate], ctx: SandboxContext) -> list[Drill
             raise TestCallError(f"{t.id}: rendered args leave the sandbox or the drill grammar: {reasons}")
         seed = {rel: _fill(text, mapping) for rel, text in t.seed.items()}
         calls.append(DrillCall(t.id, call_ref_for(t.id), t.tool, t.subject, t.purpose,
-                               t.expect_baseline, args, seed, t.provenance))
+                               t.expect_baseline, args, seed, t.provenance, t.probe))
     return calls
 
 

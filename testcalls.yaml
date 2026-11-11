@@ -67,3 +67,103 @@ calls:
     expect_baseline: APPROVAL_GATED
     seed: {"seed/gate-probe.txt": "approval check file\n"}
     args: {command: "chmod o+w {SANDBOX}/seed/gate-probe.txt"}
+  # TC11-TC16: output shapes that trimmers, squashers and redactors act on. printf only; nothing but text is printed.
+  - id: TC11
+    tool: terminal
+    subject: ANSI colour output
+    purpose: "Prints two words wrapped in ANSI colour codes. Shows output cleaners that strip terminal escape codes (Hermes core strips them too, so the baseline shows it)."
+    expect_baseline: RESULT_CHANGED_BY_CORE
+    args: {command: "printf '\\033[1;31mPG_ANSI red\\033[0m plain \\033[32mgreen\\033[0m\\n'"}
+  - id: TC12
+    tool: terminal
+    subject: carriage-return progress bar
+    purpose: "Prints a three-step progress bar redrawn with carriage returns. Shows plugins that squash progress output."
+    expect_baseline: PASSED_THROUGH
+    args: {command: "printf 'PG_PROGRESS [#.........] 10%%\\rPG_PROGRESS [#####.....] 50%%\\rPG_PROGRESS [##########] 100%%\\n'"}
+  - id: TC13
+    tool: terminal
+    subject: duplicate lines
+    purpose: "Prints the same line 40 times. Shows plugins that collapse repeated output."
+    expect_baseline: PASSED_THROUGH
+    args: {command: "printf 'PG_DUPLICATE same line\\n%.0s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40"}
+  - id: TC14
+    tool: terminal
+    subject: base64-looking blob
+    purpose: "Prints one 2560-character base64 line (it decodes to a repeated synthetic phrase). Shows plugins that elide encoded blobs."
+    expect_baseline: PASSED_THROUGH
+    args: {command: "printf 'UFJPVklORyBHUk9VTkQgc3ludGhldGljIGJsb2Ig%.0s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64"}
+  - id: TC15
+    tool: terminal
+    subject: minified JSON blob
+    purpose: "Prints one line of minified synthetic JSON. Shows plugins that reformat or shorten structured output."
+    expect_baseline: PASSED_THROUGH
+    args: {command: "printf '{\"pg\":\"PG_JSON_BLOB\",\"items\":[1,2,3,4,5],\"nested\":{\"ok\":true,\"note\":\"synthetic\"}}\\n'"}
+  - id: TC16
+    tool: terminal
+    subject: credential-shaped output (documented fake)
+    purpose: "Prints AWS's documented example access key id (a published fake, never a real key). Shows plugins that redact credential-shaped output (Hermes core masks it too, so the baseline shows it)."
+    expect_baseline: RESULT_CHANGED_BY_CORE
+    args: {command: "printf 'aws_access_key_id = {FAKE_AWS_KEY_ID}\\n'"}
+  # TC17-TC20: home-shaped protected paths, seeded or written inside the sandbox only, with synthetic content.
+  - id: TC17
+    tool: read_file
+    subject: env file read (synthetic value)
+    purpose: "Reads a seeded sandbox .env file holding one synthetic value. Shows plugins that guard env-file reads; Hermes core refuses the read itself after every pre_tool_call hook has seen it."
+    expect_baseline: PASSED_THROUGH
+    seed: {".env": "PG_SYNTHETIC_API_TOKEN=pg-synthetic-not-a-real-value\n"}
+    args: {path: "{SANDBOX}/.env"}
+  - id: TC18
+    tool: read_file
+    subject: ssh key file read (synthetic text)
+    purpose: "Reads a seeded sandbox .ssh/id_rsa whose body is synthetic text, not a key. Shows plugins that guard key-file paths; Hermes's read tool masks the key block itself."
+    expect_baseline: PASSED_THROUGH
+    seed: {".ssh/id_rsa": "-----BEGIN OPENSSH PRIVATE KEY-----\nPROVINGGROUND-SYNTHETIC-TEXT-NOT-A-KEY\n-----END OPENSSH PRIVATE KEY-----\n"}
+    args: {path: "{SANDBOX}/.ssh/id_rsa"}
+  - id: TC19
+    tool: write_file
+    subject: shell startup file write
+    purpose: "Writes a comment-only .bashrc inside the sandbox. Shows plugins that guard shell startup files."
+    expect_baseline: PASSED_THROUGH
+    args: {path: "{SANDBOX}/.bashrc", content: "# PROVING GROUND synthetic shell startup file (sandbox only)\n"}
+  - id: TC20
+    tool: write_file
+    subject: config file write
+    purpose: "Writes a synthetic .config/agent/config.yaml inside the sandbox. Shows plugins that guard configuration files."
+    expect_baseline: PASSED_THROUGH
+    args: {path: "{SANDBOX}/.config/agent/config.yaml", content: "# PROVING GROUND synthetic config (sandbox only)\nprovingground: synthetic\n"}
+  # TC21-TC24: block-only probes. PROVING GROUND's own pre_tool_call blocks each one in every column, so none runs;
+  # a plugin that blocks or rewrites the call first still shows (the first block wins).
+  - id: TC21
+    tool: execute_code
+    probe: true
+    subject: code execution (probe, never run)
+    purpose: "A one-line print as code to execute. Block-only: shows plugins that guard code execution; the code never runs."
+    expect_baseline: NOT_EXECUTED
+    args: {code: "print('PG_PROBE_MARKER {CALL_ID}')"}
+  - id: TC22
+    tool: delegate_task
+    probe: true
+    subject: subagent delegation (probe, never run)
+    purpose: "A one-line goal for a subagent. Block-only: shows plugins that guard delegation; no subagent starts."
+    expect_baseline: NOT_EXECUTED
+    args: {goal: "Reply with PG_PROBE_MARKER {CALL_ID} and stop."}
+  - id: TC23
+    tool: web_extract
+    probe: true
+    subject: web page extract (probe, never run)
+    purpose: "Asks for the recorder's own loopback URL. Block-only: shows plugins that guard web tools; the recorder stays silent."
+    expect_baseline: NOT_EXECUTED
+    args: {urls: ["{RECORDER_URL}/{CALL_ID}"]}
+  - id: TC24
+    tool: memory
+    probe: true
+    subject: memory write (probe, never run)
+    purpose: "Asks to add one synthetic memory note. Block-only: shows plugins that guard memory writes; nothing is stored."
+    expect_baseline: NOT_EXECUTED
+    args: {target: memory, operations: [{action: add, content: "PG_PROBE_MARKER {CALL_ID} synthetic note"}]}
+# Reply and user-turn probe text (--all-wires). Synthetic and reserved values only: example.com mail, a 555-01xx
+# fictional phone number, the 10.5555 test DOI prefix, CJK and Cyrillic sample text, and one repeated token. See
+# testcalls.load_wire_probe; the scripted prompt and final reply carry it once the injector integration lands.
+wire_probe:
+  user_turn: "Synthetic profile for a wiring test: Jane Q. Example, jane.example@example.com, +1-202-555-0143, account PG-000-0000."
+  reply: "PROVINGGROUND synthetic reply. Cited: doi:10.5555/pg.synthetic.0001 and arXiv:0000.00000. 你好，世界。こんにちは。Привет, мир. Contact jane.example@example.com. PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT PG_REPEAT"

@@ -7,7 +7,8 @@ from pathlib import Path
 
 PKG = Path(__file__).resolve().parent.parent / "proving_ground"
 ALLOWED = {
-    "matrix.py": {"__future__", "json", "re", "dataclasses", "enum", "typing"},
+    "matrix.py": {"__future__", "json", "re", "dataclasses", "enum", "typing", "probes"},
+    "probes.py": {"__future__", "dataclasses", "typing"},
     "report.py": {"__future__", "difflib", "html", "io", "re", "dataclasses", "typing", "rich", "matrix"},
 }
 
@@ -18,8 +19,8 @@ def imported_roots(path: Path) -> set[str]:
         if isinstance(node, ast.Import):
             roots |= {alias.name.split(".")[0] for alias in node.names}
         elif isinstance(node, ast.ImportFrom):
-            roots.add((node.module or "").split(".")[0] if node.level == 0 else
-                      ("matrix" if any(a.name == "matrix" for a in node.names) else node.module or ""))
+            named = next((a.name for a in node.names if a.name in ("matrix", "probes")), None)
+            roots.add((node.module or "").split(".")[0] if node.level == 0 else named or node.module or "")
     return roots
 
 

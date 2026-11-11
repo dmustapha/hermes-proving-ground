@@ -34,7 +34,7 @@ A report reads top to bottom: the tally and each finding in plain words, the mat
 | Option | What it adds |
 |---|---|
 | `--without PLUGIN`, `--only CALL` | Leave a plugin out, or run only some test calls (both repeatable). A name that matches nothing is refused instead of running another drill. |
-| `--calls FILE` | Your own test calls (ids start with `U`) and `expect:` contracts. They go through the same validator as the built-in calls, plus a closed call grammar, before anything is spawned. |
+| `--calls FILE` | Your own test calls (ids start with `U`) and `expect:` contracts. They go through the same validator as the built-in calls, plus a closed call grammar, before anything is spawned. The grammar runs only `echo`, `printf` and `seq` (plus the recorder fetch and a sandbox `chmod`), but every word after `echo`'s or `printf`'s first argument is printed literally, so a call can carry the flag-shaped text a guard matches, such as a force push (`examples/author-calls.yaml`, U03). |
 | `--check` | Exit 5 unless every declared `expect:` is met. It also fails when an expectation names a column that is not in the run, or when no call declares an `expect:` at all. |
 | `--json`, `--markdown`, `--html` | Also write the report in that format. In the JSON export, each recorded text is capped at 8192 characters, and the cut is marked. Saved and exported reports replace your home and temp paths with `~` and `{TMP}`. |
 | `--focus` | The terminal and Markdown views leave out the rows where every cell is PASSED THROUGH, and name the rows they left out. The HTML report always has a checkbox that does the same with CSS only; `--focus` starts it checked. |

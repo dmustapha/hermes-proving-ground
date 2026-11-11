@@ -1,0 +1,5 @@
+name: fx_probe_guard
+version: "0.1.0"
+description: "Test-only: blocks execute_code and rewrites a delegate_task goal in pre_tool_call."
+author: dmustapha
+provides_hooks: [pre_tool_call]

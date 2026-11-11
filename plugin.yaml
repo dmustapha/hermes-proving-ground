@@ -15,6 +15,7 @@ provides_hooks:
   - post_tool_call
   - transform_tool_result
   - transform_terminal_output
+  - pre_verify
   - post_api_request
   - pre_llm_call
   - transform_llm_output
