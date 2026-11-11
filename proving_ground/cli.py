@@ -46,10 +46,33 @@ def find_hermes(explicit: str | None) -> Path:
     raise safety.Refusal("HERMES_NOT_FOUND", "could not find the hermes executable; pass --hermes-bin PATH.")
 
 
+def hermes_scratch_dirs() -> list[Path]:
+    """Where Hermes's boot points TMPDIR when the user left it unset (hermes_bootstrap.py:455-462): the scratch
+    dir it exported, and <HERMES_HOME>/cache/scratch."""
+    home = os.environ.get("HERMES_HOME", "").strip()
+    dirs = [(Path(home).expanduser() if home else Path.home() / ".hermes") / "cache" / "scratch"]
+    marked = os.environ.get("HERMES_SCRATCH_DIR", "").strip()
+    return dirs + ([Path(marked)] if marked else [])
+
+
+def drill_temp_base() -> Path:
+    """The temp dir drills use. On Linux with TMPDIR unset, Hermes's boot moves the temp dir into its own scratch
+    dir, which is not a system temp base; drills then use the first existing system temp base instead, and
+    tempfile follows it so the warm cache, the roots and the sweeps all look at the same place."""
+    temp = Path(tempfile.gettempdir()).resolve()
+    if not any(temp.is_relative_to(d.resolve()) for d in hermes_scratch_dirs()):
+        return temp
+    system = next((Path(b) for b in safety.TEMP_BASES if Path(b).is_dir()), None)
+    if system is None:
+        return temp
+    tempfile.tempdir = str(system)
+    return system.resolve()
+
+
 def build_settings(args: argparse.Namespace) -> runner.RunnerSettings:
     if sys.platform.startswith("win"):
         raise safety.Refusal("SANDBOX_UNSUPPORTED", "drills run on macOS and Linux only.")
-    temp_base = Path(tempfile.gettempdir()).resolve()
+    temp_base = drill_temp_base()
     if not safety.under_temp_base(temp_base):
         raise safety.Refusal("SANDBOX_UNSUPPORTED", f"temp dir {temp_base} is not under a system temp base.")
     return runner.RunnerSettings(hermes_bin=find_hermes(getattr(args, "hermes_bin", None)), pg_source=PG_SOURCE,

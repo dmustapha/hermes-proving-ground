@@ -58,6 +58,6 @@ def test_ci_overrides_only_the_env_the_recipe_declares() -> None:
     job = _yaml(WORKFLOW)["jobs"]["author-recipe"]
     runner_step = next(s for s in job["steps"] if "examples/github-action.yml" in s.get("run", ""))
     assert set(runner_step["env"]) <= declared
-    assert _yaml(RECIPE)["env"]["TMPDIR"] == "/tmp"  # Hermes's Linux scratch TMPDIR is refused as a temp base
+    assert "TMPDIR" not in _yaml(RECIPE)["env"]  # Hermes's Linux scratch TMPDIR falls back to /tmp on its own
     assert runner_step["env"]["PLUGIN_DIR"] == "fixtures/fx_guard"
     assert runner_step["env"]["CALLS_FILE"] == "examples/author-calls.yaml"

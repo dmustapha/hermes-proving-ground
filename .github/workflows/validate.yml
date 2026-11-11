@@ -91,11 +91,10 @@ jobs:
           if-no-files-found: ignore
   linux-drill:
     # The real fixture drill on Linux from a git install of this commit: the golden matrix and tally, no aborted
-    # column, zero leftover processes and roots; then the in-process golden and extended-stack drills.
+    # column, zero leftover processes and roots; then the in-process golden and extended-stack drills. TMPDIR is left
+    # unset on purpose: Hermes then points it at its own scratch dir and the drill must fall back to /tmp by itself.
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    env:
-      TMPDIR: /tmp
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
@@ -112,7 +111,11 @@ jobs:
           hermes plugins install
           "${{ github.server_url }}/${{ github.event.pull_request.head.repo.full_name || github.repository }}"
           --ref "${{ github.event.pull_request.head.sha || github.sha }}" --enable
+      - name: TMPDIR is unset, so Hermes's scratch temp dir is what the drill meets
+        run: test -z "${TMPDIR:-}"
       - run: hermes provingground warm
+      - name: the warm cache is under /tmp, not Hermes's scratch dir
+        run: hermes provingground warm --check | tee "$RUNNER_TEMP/warm-check.txt" && grep -q "(temp dir /tmp)" "$RUNNER_TEMP/warm-check.txt"
       - name: fixture drill
         run: hermes provingground --fixtures --no-color --json "$RUNNER_TEMP/fixture-report.json"
       - name: the saved report is the golden matrix with nothing left behind
@@ -125,7 +128,7 @@ jobs:
         if: always()
         run: |
           procs=$(ps axeww -o pid=,command= | grep -v grep | grep -c "HERMES_HOME=[^ ]*provingground-[a-z0-9_]\{8\}" || true)
-          roots=$(find "$TMPDIR" -maxdepth 1 -regextype posix-extended -regex '.*/provingground-[a-z0-9_]{8}' | wc -l)
+          roots=$(find "${TMPDIR:-/tmp}" -maxdepth 1 -regextype posix-extended -regex '.*/provingground-[a-z0-9_]{8}' | wc -l)
           echo "leftover processes: $procs, leftover roots: $roots"
           test "$procs" -eq 0 && test "$roots" -eq 0
       - if: always()

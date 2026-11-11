@@ -18,9 +18,6 @@ env:
   PLUGIN_DIR: .                       # your plugin's directory in this repo (the one holding plugin.yaml)
   PLUGIN_NAME: my_plugin              # its directory name under plugins/, as `solo:<name>` in your calls file
   CALLS_FILE: author-calls.yaml       # your test calls and expect: contracts (see examples/author-calls.yaml)
-  # Linux runners leave TMPDIR unset, and Hermes then points it at ~/.hermes/cache/scratch, which PROVING GROUND
-  # refuses as a drill temp base (SANDBOX_UNSUPPORTED). Keep this line.
-  TMPDIR: /tmp
 jobs:
   wiring-test:
     runs-on: ubuntu-latest
