@@ -79,7 +79,7 @@ def test_error_path_survives_a_failing_reply_builder(tmp_path: Path, monkeypatch
 
 
 def test_last_resort_reply_is_a_real_chat_completion_copied_per_use(tmp_path: Path) -> None:
-    from openai.types.chat import ChatCompletion
+    ChatCompletion = pytest.importorskip("openai.types.chat").ChatCompletion  # openai ships with Hermes
 
     state, log = setup_state(tmp_path, [])
     middleware = injector.make_llm_execution(state, log)

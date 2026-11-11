@@ -220,6 +220,7 @@ def _child(plugin_root_module, fake_ctx, monkeypatch, tmp_path: Path, wires: boo
 @pytest.mark.parametrize("wires", [True, False])
 def test_a_child_registers_wire_taps_only_when_its_plan_asks(plugin_root_module, fake_ctx, monkeypatch, tmp_path,
                                                              wires: bool) -> None:
+    pytest.importorskip("openai")  # the child's injector builds its replies with Hermes's openai
     hooks = _child(plugin_root_module, fake_ctx, monkeypatch, tmp_path, wires)
     expected = plugin_root_module.HOOK_NAMES if wires else plugin_root_module.CALL_HOOK_NAMES
     assert sorted(hooks) == sorted(expected)

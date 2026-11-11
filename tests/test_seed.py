@@ -174,7 +174,7 @@ def test_from_is_refused_outside_warm_and_with_check(monkeypatch) -> None:
 
 
 def test_warm_from_refuses_under_yolo_before_copying(monkeypatch) -> None:
-    import cron.execution_identity as cron_identity
+    cron_identity = pytest.importorskip("cron.execution_identity")  # a Hermes core module
 
     monkeypatch.setattr(cron_identity, "current_cron_execution", lambda: None)
     monkeypatch.setenv("HERMES_YOLO_MODE", "1")
