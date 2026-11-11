@@ -19,12 +19,12 @@ CALL_HOOK_NAMES: tuple[str, ...] = (
     "post_tool_call",
     "transform_tool_result",
     "transform_terminal_output",
-    "pre_approval_request",
-    "post_approval_response",
 )
+# The step reply as the agent took it in, after every llm_execution middleware (observer.make_reply_tap).
+STEP_HOOK_NAMES: tuple[str, ...] = ("post_api_request",)
 # The context and reply wire, recorded only in a drill child run with --all-wires (observer.WIRE_HOOK_NAMES).
 WIRE_HOOK_NAMES: tuple[str, ...] = ("pre_llm_call", "transform_llm_output", "post_llm_call")
-HOOK_NAMES: tuple[str, ...] = CALL_HOOK_NAMES + WIRE_HOOK_NAMES
+HOOK_NAMES: tuple[str, ...] = CALL_HOOK_NAMES + STEP_HOOK_NAMES + WIRE_HOOK_NAMES
 
 
 def _inert_hook(name: str) -> Callable[..., None]:
@@ -83,21 +83,40 @@ def _register_surfaces(ctx: Any) -> None:
 
 
 def _register_drill_child(ctx: Any) -> None:
-    from .proving_ground import injector, observer
+    from .proving_ground import census, injector, observer
 
     state_dir = Path(os.environ["HERMES_HOME"]) / safety.STATE_DIRNAME
     plan = observer.load_plan(state_dir)
     log = observer.EventLog(state_dir / safety.EVENTS_FILENAME)
+    watcher = census.Watcher(log, lambda: getattr(ctx, "_manager", None), [str(k) for k in plan.get("subjects") or []])
+    watcher.wrap_loaded()  # PROVING GROUND loads last in its layer: every other subject has registered by now
     hooks = observer.make_hooks(state_dir, Path(plan["sandbox"]), log)
     for name in CALL_HOOK_NAMES:
         ctx.register_hook(name, hooks[name])
+    ledger = observer.ReplyLedger()
+    ctx.register_hook("post_api_request", observer.make_reply_tap(log, ledger))
     if plan.get("wires"):  # a default drill registers no wire hook at all, so its children are unchanged
         for name, tap in observer.make_wire_hooks(log).items():
             ctx.register_hook(name, tap)
     probe = getattr(ctx, "has_plugin", None)  # public PluginContext.has_plugin (plugins_context.py:57-63)
-    ctx.register_middleware("llm_execution", injector.make_llm_execution(state_dir, log, probe, _load_order_probe(ctx)))
+    ctx.register_middleware("llm_execution", injector.make_llm_execution(
+        state_dir, log, probe, _load_order_probe(ctx), ledger=ledger, watcher=watcher,
+        registry_probe=_registry_probe(ctx)))
+    ctx.register_middleware("tool_execution", observer.make_tool_execution_tap(log))
     observer.install_socket_audit(log)
     log.write("activated", calls=len(plan["calls"]), dont_write_bytecode=sys.dont_write_bytecode)
+
+
+def _registry_probe(ctx: Any) -> Callable[[], Any]:
+    """Drill child only, read-only: the manager's LoadedPlugin records (hermes_cli/plugins.py:222-233), the same
+    private mapping _load_order_probe reads. Missing means the census reports each plugin's registrations unknown."""
+    def registry() -> Any:
+        found = getattr(getattr(ctx, "_manager", None), "_plugins", None)
+        if found is None:
+            raise LookupError("no plugin registry on this Hermes")
+        return found
+
+    return registry
 
 
 def _load_order_probe(ctx: Any) -> Callable[[], list[str]]:
@@ -105,10 +124,7 @@ def _load_order_probe(ctx: Any) -> Callable[[], list[str]]:
     in (hermes_cli/plugins_loader.py:359, plugins_activation.py:84-90 iterate it the same way). There is no public
     accessor, so this reads the private mapping behind PluginContext.has_plugin; any failure reports "unknown"."""
     def order() -> list[str]:
-        registry = getattr(getattr(ctx, "_manager", None), "_plugins", None)
-        if registry is None:
-            raise LookupError("no plugin registry on this Hermes")
-        return list(registry)
+        return list(_registry_probe(ctx)())
 
     return order
 

@@ -15,10 +15,10 @@ provides_hooks:
   - post_tool_call
   - transform_tool_result
   - transform_terminal_output
-  - pre_approval_request
-  - post_approval_response
+  - post_api_request
   - pre_llm_call
   - transform_llm_output
   - post_llm_call
 provides_middleware:
   - llm_execution
+  - tool_execution

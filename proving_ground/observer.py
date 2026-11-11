@@ -93,27 +93,117 @@ def make_hooks(state_dir: Path, sandbox: Path, log: EventLog) -> dict[str, Calla
 
     def post_tool_call(tool_name: str = "", args: Any = None, result: Any = None, status: Any = None,
                        error_type: Any = None, error_message: Any = None, tool_call_id: Any = None,
-                       **_: Any) -> None:
+                       middleware_trace: Any = None, **_: Any) -> None:
         final = _as_args(args)
         log.write("post_tool_call", tool=tool_name, args=final, result=result, status=status,
-                  error_type=error_type, error_message=error_message, tool_call_id=tool_call_id)
+                  error_type=error_type, error_message=error_message, tool_call_id=tool_call_id,
+                  middleware_trace=trace_labels(middleware_trace))
         reasons = safety.escape_reasons(final, sandbox)
         if reasons:
             log.write("escaped", tool_call_id=tool_call_id, reasons=reasons, args=final)
             write_abort(state_dir, log, "ESCAPED")
 
-    def approval_observer(hook: str) -> Callable[..., None]:
-        def observe(**fields: Any) -> None:
-            log.write("approval", hook=hook, fields={k: str(v)[:500] for k, v in fields.items()})
-
-        observe.__name__ = f"provingground_{hook}"
-        return observe
-
     return {"pre_tool_call": pre_tool_call, "post_tool_call": post_tool_call,
             "transform_tool_result": transform_tool_result,
-            "transform_terminal_output": transform_terminal_output,
-            "pre_approval_request": approval_observer("pre_approval_request"),
-            "post_approval_response": approval_observer("post_approval_response")}
+            "transform_terminal_output": transform_terminal_output}
+
+
+def trace_labels(trace: Any) -> list[str]:
+    """middleware_trace entries ({source, reason, name}, hermes_cli/middleware.py:77-82) as short labels."""
+    if not isinstance(trace, list):
+        return []
+    labels = []
+    for entry in trace:
+        if isinstance(entry, Mapping):
+            parts = [str(entry[k]) for k in ("name", "source", "reason") if isinstance(entry.get(k), str) and entry[k]]
+            labels.append(" / ".join(parts) or "plugin")
+    return labels
+
+
+def _field(obj: Any, name: str) -> Any:
+    return obj.get(name) if isinstance(obj, Mapping) else getattr(obj, name, None)
+
+
+def _arguments(raw: Any) -> Any:
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return raw
+    return raw
+
+
+def reply_shape(message: Any) -> dict[str, Any]:
+    """What a step's reply says, in one comparable shape: its text and its tool calls (id, name, parsed arguments)."""
+    calls = []
+    for call in _field(message, "tool_calls") or []:
+        function = _field(call, "function")
+        calls.append([str(_field(call, "id")), str(_field(function, "name")), _arguments(_field(function, "arguments"))])
+    content = _field(message, "content")
+    return {"content": "" if content is None else str(content).strip(), "tool_calls": calls}
+
+
+def reply_changes(sent: Mapping[str, Any], got: Mapping[str, Any]) -> list[str]:
+    """Which parts of the reply PROVING GROUND scripted differ in the assistant message the agent took in."""
+    changes = []
+    if sent.get("content") != got.get("content"):
+        changes.append("reply text")
+    mine, theirs = sent.get("tool_calls") or [], got.get("tool_calls") or []
+    if [c[:2] for c in mine] != [c[:2] for c in theirs]:
+        changes.append("tool calls")
+    elif mine != theirs:
+        changes.append("tool call arguments")
+    return changes
+
+
+class ReplyLedger:
+    """The reply PROVING GROUND scripted for the current step, until post_api_request shows what the agent took in.
+    One per child process: the injector writes it, the post_api_request tap reads and clears it."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._pending: tuple[str, dict[str, Any]] | None = None
+
+    def expect(self, call_id: str, body: Mapping[str, Any]) -> None:
+        message = ((body.get("choices") or [{}])[0] or {}).get("message") or {}
+        with self._lock:
+            self._pending = (call_id, reply_shape(message))
+
+    def take(self) -> tuple[str, dict[str, Any]] | None:
+        with self._lock:
+            pending, self._pending = self._pending, None
+        return pending
+
+
+def make_reply_tap(log: EventLog, ledger: ReplyLedger) -> Callable[..., None]:
+    """post_api_request(assistant_message=...) carries the step's reply after every llm_execution middleware
+    (agent/turn_response_intake.py:66-105, :188). PROVING GROUND sits innermost, so a difference from its scripted
+    reply is a subject middleware's edit; no scripted reply pending means another frame answered the step."""
+    def post_api_request(assistant_message: Any = None, **_: Any) -> None:
+        pending = ledger.take()
+        got = reply_shape(assistant_message)
+        if pending is None:
+            log.write("model_reply", call_id=None, changes=["step answered without PROVING GROUND"], reply=got)
+            return None
+        call_id, sent = pending
+        changes = reply_changes(sent, got)
+        log.write("model_reply", call_id=call_id, changes=changes, **({"reply": got} if changes else {}))
+        return None
+
+    return post_api_request
+
+
+def make_tool_execution_tap(log: EventLog) -> Callable[..., Any]:
+    """Innermost tool_execution middleware (PROVING GROUND loads last): it records that dispatch reached it, then
+    hands the call on unchanged. When an outer subject frame returns without next_call, this tap and PROVING
+    GROUND's pre_tool_call never fire for that call (agent/tool_executor.py:776-818), and post_tool_call still does."""
+    def tool_execution(tool_name: str = "", args: Any = None, next_call: Any = None, tool_call_id: Any = None,
+                       **_: Any) -> Any:
+        log.write("tool_execution", tool=tool_name, args=_as_args(args), tool_call_id=tool_call_id)
+        return next_call()
+
+    tool_execution.__name__ = "provingground_tool_execution"
+    return tool_execution
 
 
 WIRE_HOOK_NAMES: tuple[str, ...] = ("pre_llm_call", "transform_llm_output", "post_llm_call")

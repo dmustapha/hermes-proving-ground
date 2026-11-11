@@ -19,11 +19,14 @@ The README has the quickstart. This page has the rest: actions and options, what
 | REWROTE | A plugin changed the arguments; the changed call ran. |
 | RESULT CHANGED | The call ran, but what reached the model differs from the zero-plugin baseline. The cell detail names the hop (`terminal_output` or `tool_result`). |
 | APPROVAL-GATED | The call needed approval and Hermes denied it headless. `(core)` when the baseline does the same. |
-| PASSED THROUGH | Nothing in the stack changed this call or its result. |
+| REQUEST REWRITTEN | An `llm_request` or `llm_execution` middleware changed the step request that produced this call. |
+| MODEL REPLY CHANGED | An `llm_execution` middleware changed the scripted reply for this call before the agent took it in. |
+| EXECUTION REPLACED | A `tool_execution` middleware answered the call itself; PROVING GROUND's `pre_tool_call` and the tool never ran. |
+| PASSED THROUGH | Nothing in the stack changed this call or its result. `(ran, no change)` when a hook or middleware of the column's plugins fired on this call, `(not invoked)` when none did. |
 
 More (statuses, never results): ESCAPED (a rewritten call ran outside the temporary directory; detected after it ran, not prevented, and the column is stopped), ERRORED (a plugin hook raised, or the harness stopped the column), LOAD FAILED (the plugin was not confirmed loaded in its child, so its cells are never shown as PASSED THROUGH), NOT RUN (the call never reached execution in this column) and N/A (the plugin declares `requires_env`; the child has no credentials, so it is not run).
 
-`(core)` marks Hermes's own behaviour, such as its head+tail truncation of long output (TC05) or its headless approval deny (TC10). It is never attributed to a plugin. A stack cell that carries a cross-plugin finding says so in the cell, for example `REWROTE · unseen by fx_guard`. Every report prints a coverage line, for example `executed: 3 · unavailable (requires_env): 0 · dependency-skipped / not a directory plugin: 0 · load-failed: 0`, so an all-quiet matrix never reads as full coverage. The tally counts each distinct effect (a call and an outcome a plugin produced) once, however many columns show it.
+`(core)` marks Hermes's own behaviour, such as its head+tail truncation of long output (TC05) or its headless approval deny (TC10). It is never attributed to a plugin. A stack cell that carries a cross-plugin finding says so in the cell, for example `REWROTE · unseen by fx_guard`. Every report prints a coverage line, for example `executed: 3 · unavailable (requires_env): 0 · dependency-skipped / not a directory plugin: 0 · load-failed: 0`, so an all-quiet matrix never reads as full coverage. Each plugin also gets a line with the hooks and middleware it registered, which of them fired, which never fired in this drill (UNTESTED), and its registered tools and commands (not exercised). The tally counts each distinct effect (a call and an outcome a plugin produced) once, however many columns show it.
 
 A report reads top to bottom: the tally and each finding in plain words, the matrix, the attribution of each stack effect, then the drill conditions (model, provider, approvals, credentials, network, sandbox, Hermes version, load order, coverage, cleanup, wall time).
 

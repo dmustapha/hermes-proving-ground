@@ -1,0 +1,5 @@
+name: tx_reply_stamper
+version: "0.1.0"
+description: "Test-only: an llm_execution middleware that stamps text onto each tool-call reply. Its key sorts after proving-ground."
+author: dmustapha
+provides_middleware: [llm_execution]

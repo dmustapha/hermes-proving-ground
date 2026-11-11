@@ -29,7 +29,8 @@ STYLE = {mx.Outcome.BLOCKED: "bold cyan", mx.Outcome.REWROTE: "bold yellow", mx.
          mx.Outcome.APPROVAL_GATED: "bold blue", mx.Outcome.PASSED_THROUGH: "dim", mx.Outcome.ESCAPED: "bold red",
          mx.Outcome.ERRORED: "red", mx.Outcome.LOAD_FAILED: "red", mx.Outcome.NOT_RUN: "dim",
          mx.Outcome.NOT_APPLICABLE: "dim", mx.Outcome.CONTEXT_ADDED: "bold green",
-         mx.Outcome.REPLY_CHANGED: "bold green"}
+         mx.Outcome.REPLY_CHANGED: "bold green", mx.Outcome.EXECUTION_REPLACED: "bold cyan",
+         mx.Outcome.REQUEST_REWRITTEN: "bold yellow", mx.Outcome.MODEL_REPLY_CHANGED: "bold green"}
 QUOTE_PREFIX = "│ "  # every line of plugin-authored text (raw output, block messages) is quoted, never PG's words
 QUOTE_TITLE = "quoted from the plugin stack, not PROVING GROUND's words"
 _HTML_QUOTED = re.compile(r'<pre class="quoted">.*?</pre>', re.S)
@@ -63,8 +64,9 @@ def provenance(column: str) -> str:
 
 def cell_label(cell: mx.Cell) -> str:
     label = " + ".join(mx.LABELS[o] for o in sorted(cell.outcomes, key=mx.PRECEDENCE.index))
-    core = " (core)" if cell.core else " (core + plugin)" if cell.core_also else ""
-    return label + core + (" UNSTABLE" if cell.varied else " ~" if cell.unstable else "")
+    core = " (core + plugin)" if cell.core_also or (cell.core and cell.added) else " (core)" if cell.core else ""
+    live = f" ({cell.liveness})" if cell.liveness else ""
+    return label + live + core + (" UNSTABLE" if cell.varied else " ~" if cell.unstable else "")
 
 
 def _mark_for(f: mx.Finding) -> tuple[str, str] | None:
@@ -139,7 +141,47 @@ def hooks_legend(m: mx.Matrix) -> list[str]:
     lines += ["columns (the plugins loaded in each):"]
     lines += [f"  {header_title(m, name)}: {', '.join(m.column_plugins.get(name, ())) or 'no plugins'}"
               for name in m.columns]
-    return lines if keys else ["this report records no declared hooks (it predates them, or tested no plugin)"]
+    if not keys:
+        return ["this report records no declared hooks (it predates them, or tested no plugin)"]
+    return lines + (["registered in the child, and what fired in this drill:", *census_lines(m)] if m.census else [])
+
+
+def _names(entries: Sequence[str]) -> str:
+    return ", ".join(entries) or "none"
+
+
+def census_line(key: str, c: mx.PluginCensus) -> str:
+    """One plugin's registrations against what fired: hooks and middleware that never fired are UNTESTED here, and
+    registered tools and commands are not exercised by the drill."""
+    if c.registered is None:
+        return f"{key}: registrations unknown (the child could not read them)"
+    hooks = [*c.registered.get("hooks", ()), *(f"{k} (middleware)" for k in c.registered.get("middleware", ()))]
+    hooks = list(dict.fromkeys(hooks))
+    seen = {n.split(" ", 1)[1] + (" (middleware)" if n.startswith("middleware ") else "") for n in c.fired}
+    if not c.watched:
+        return (f"{key}: hooks registered: {_names(hooks)}; fired: not observed (a callback could not be matched "
+                "to this plugin)" + _extras(c))
+    fired = [h for h in hooks if h in seen]
+    never = [h for h in hooks if h not in seen]
+    late = " (watched from the first model step, so a hook that fires before it is listed as never fired)" if c.late else ""
+    return (f"{key}: hooks registered: {_names(hooks)}; fired: {_names(fired)}; never fired in this drill "
+            f"(UNTESTED): {_names(never)}{late}" + _extras(c))
+
+
+def _extras(c: mx.PluginCensus) -> str:
+    parts = []
+    if c.registered and c.registered.get("tools"):
+        parts.append(f"registered tools: {_names(c.registered['tools'])} (not exercised)")
+    if c.registered and c.registered.get("commands"):
+        parts.append(f"registered commands: {_names(c.registered['commands'])} (not exercised)")
+    if c.inner and c.registered and "llm_execution" in c.registered.get("middleware", ()):
+        parts.append("loaded after PROVING GROUND (requires_plugins), so its llm_execution middleware is inside "
+                     "PROVING GROUND's scripted frame and is not reached")
+    return "".join(f"; {p}" for p in parts)
+
+
+def census_lines(m: mx.Matrix) -> list[str]:
+    return [census_line(key, c) for key, c in m.census.items()]
 
 
 def short_title(name: str) -> str:
@@ -190,7 +232,9 @@ def matrix_to_dict(m: mx.Matrix) -> dict[str, Any]:
     cells = [{"column": c.column, "call_id": c.call_id, "outcomes": [o.value for o in c.outcomes],
               "primary": c.primary.value, "hop": c.hop, "core": c.core, "core_also": c.core_also,
               "unstable": c.unstable, "note": c.note,
-              "provenance": provenance(c.column), **({"varied": list(c.varied)} if c.varied else {})}
+              "provenance": provenance(c.column), **({"varied": list(c.varied)} if c.varied else {}),
+              **({"added": [o.value for o in c.added]} if c.added else {}),
+              **({"liveness": c.liveness} if c.liveness else {})}
              for c in m.cells.values()]
     calls = [{**asdict(c), "expect": {k: list(v) for k, v in (c.expect or {}).items()}} for c in m.calls]
     return {"schema": REPORT_SCHEMA, "generator": GENERATOR, "headline": HEADLINE,
@@ -205,7 +249,23 @@ def matrix_to_dict(m: mx.Matrix) -> dict[str, Any]:
             "load_failed": {k: list(v) for k, v in m.load_failed.items()},
             "unreplayable": [[cid, list(r)] for cid, r in m.unreplayable],
             **({"options": dict(m.options)} if m.options else {}),
-            **({"column_meta": _column_meta(m)} if m.column_plugins else {})}
+            **({"column_meta": _column_meta(m)} if m.column_plugins else {}),
+            **({"census": {k: _census_dict(c) for k, c in m.census.items()}} if m.census else {})}
+
+
+def _census_dict(c: mx.PluginCensus) -> dict[str, Any]:
+    return {"registered": {k: list(v) for k, v in c.registered.items()} if c.registered is not None else None,
+            "fired": list(c.fired), "watched": c.watched, "late": c.late, "inner": c.inner}
+
+
+def _census_from(raw: Mapping[str, Any]) -> dict[str, mx.PluginCensus]:
+    out = {}
+    for key, c in raw.items():
+        registered = c.get("registered")
+        out[str(key)] = mx.PluginCensus({k: tuple(v) for k, v in registered.items()} if registered is not None else None,
+                                        tuple(c.get("fired") or ()), bool(c.get("watched")), bool(c.get("late")),
+                                        bool(c.get("inner")))
+    return out
 
 
 def _column_meta(m: mx.Matrix) -> dict[str, Any]:
@@ -216,7 +276,8 @@ def _column_meta(m: mx.Matrix) -> dict[str, Any]:
 def _cell_from(raw: Mapping[str, Any]) -> mx.Cell:
     return mx.Cell(raw["column"], raw["call_id"], tuple(mx.Outcome(o) for o in raw["outcomes"]),
                    raw.get("hop"), bool(raw.get("core")), bool(raw.get("unstable")), raw.get("note", ""),
-                   bool(raw.get("core_also")), tuple(str(v) for v in raw.get("varied") or ()))
+                   bool(raw.get("core_also")), tuple(str(v) for v in raw.get("varied") or ()),
+                   tuple(mx.Outcome(o) for o in raw.get("added") or ()), str(raw.get("liveness") or ""))
 
 
 def _known(cls: type, raw: Mapping[str, Any]) -> dict[str, Any]:
@@ -231,8 +292,9 @@ def _call_from(raw: Mapping[str, Any]) -> mx.CallInfo:
 
 
 def _obs_from(raw: Mapping[str, Any]) -> mx.CallObservation:
+    tuples = ("escaped_reasons", "request_rewrite", "reply_changes", "middleware_trace")
     return mx.CallObservation(**{**_known(mx.CallObservation, raw),
-                                 "escaped_reasons": tuple(raw.get("escaped_reasons") or ())})
+                                 **{k: tuple(raw.get(k) or ()) for k in tuples}})
 
 
 def matrix_from_dict(data: Mapping[str, Any]) -> mx.Matrix:
@@ -252,7 +314,7 @@ def matrix_from_dict(data: Mapping[str, Any]) -> mx.Matrix:
                      {k: tuple(v) for k, v in (data.get("load_failed") or {}).items()},
                      tuple((cid, tuple(r)) for cid, r in data.get("unreplayable") or ()),
                      {str(k): str(v) for k, v in (data.get("options") or {}).items()},
-                     *_meta_from(data.get("column_meta") or {}))
+                     *_meta_from(data.get("column_meta") or {}), _census_from(data.get("census") or {}))
 
 
 def _meta_from(meta: Mapping[str, Any]) -> tuple[dict[str, tuple[str, ...]], dict[str, tuple[str, ...]]]:
@@ -391,6 +453,7 @@ def _note_lines(m: mx.Matrix) -> list[str]:
               for cid, why in m.unreplayable]
     lines += [f"• UNSTABLE {c.call_id} in {c.column}: its {len(c.varied)} solo runs showed {' / '.join(c.varied)}"
               for c in m.cells.values() if c.varied]
+    lines += [f"• coverage of {line}" for line in census_lines(m)]
     if m.unstable:
         lines.append(f"• unstable between two baseline runs (never reported as RESULT CHANGED): {', '.join(sorted(m.unstable))}")
     return lines
@@ -652,7 +715,9 @@ td a:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 .REWROTE{color:var(--rewrote);background:color-mix(in srgb,var(--rewrote) 13%,transparent)}
 .RESULT_CHANGED{color:var(--changed);background:color-mix(in srgb,var(--changed) 13%,transparent)}
 .APPROVAL_GATED{color:var(--gated);background:color-mix(in srgb,var(--gated) 13%,transparent)}
-.CONTEXT_ADDED,.REPLY_CHANGED{color:var(--wire);background:color-mix(in srgb,var(--wire) 13%,transparent)}
+.REQUEST_REWRITTEN{color:var(--rewrote);background:color-mix(in srgb,var(--rewrote) 13%,transparent)}
+.EXECUTION_REPLACED{color:var(--blocked);background:color-mix(in srgb,var(--blocked) 13%,transparent)}
+.CONTEXT_ADDED,.REPLY_CHANGED,.MODEL_REPLY_CHANGED{color:var(--wire);background:color-mix(in srgb,var(--wire) 13%,transparent)}
 .ESCAPED{color:var(--escaped);background:color-mix(in srgb,var(--escaped) 16%,transparent)}
 .ERRORED,.LOAD_FAILED{color:var(--errored);background:color-mix(in srgb,var(--errored) 10%,transparent)}
 .PASSED_THROUGH,.NOT_RUN,.NOT_APPLICABLE{color:var(--through);font-weight:500}

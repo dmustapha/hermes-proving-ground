@@ -25,6 +25,6 @@ known_issues:
   - "On macOS, Hermes's finished launchd job labels for the child homes stay listed until its next gateway start; the parent hermes process may write Hermes's own bytecode into the Hermes install; each drill child installs a process-wide audit hook (sys.addaudithook) to count non-loopback connects."
 capabilities:
   provides_tools: []
-  provides_hooks: [pre_tool_call, post_tool_call, transform_tool_result, transform_terminal_output, pre_approval_request, post_approval_response, pre_llm_call, transform_llm_output, post_llm_call]
-  provides_middleware: [llm_execution]
+  provides_hooks: [pre_tool_call, post_tool_call, transform_tool_result, transform_terminal_output, post_api_request, pre_llm_call, transform_llm_output, post_llm_call]
+  provides_middleware: [llm_execution, tool_execution]
   requires_env: []
