@@ -1,14 +1,14 @@
 <!-- File: CLAIMS.md -->
 <!-- seed ledger; rows are added before any new public sentence is written. -->
-# CLAIMS — every public sentence and the evidence that backs it
+# CLAIMS — the public claims and the evidence behind each
 
 | id | claim | kind | evidence |
 |---|---|---|---|
-| CL-01 | The model is never called during a drill. | test | tests/test_injector.py::test_scripted_rounds_then_done |
+| CL-01 | The scripted turn never calls the provider (unit test; end to end: CL-24). | test | tests/test_injector.py::test_scripted_rounds_then_done |
 | CL-01b | Every scripted step is logged with provider_called false, and the turn ends with done. | test | tests/test_injector.py::test_first_step_confirms_loaded_plugins_and_last_logs_done |
 | CL-02 | The scripted-turn middleware is registered only inside a throwaway drill child. | test | tests/test_arming.py::test_live_register_adds_no_middleware |
 | CL-03 | Each missing activation key keeps the middleware off. | test | tests/test_arming.py::test_each_missing_key_blocks_activation |
-| CL-04 | PROVING GROUND never answers or approves an approval. | test | tests/test_approvals_static.py::test_no_approval_bypass_tokens_in_shipped_code |
+| CL-04 | Static scan: no shipped code path answers or approves an approval. | test | tests/test_approvals_static.py::test_no_approval_bypass_tokens_in_shipped_code |
 | CL-05 | It refuses to run under YOLO, approvals off, cron or a messaging platform. | test | tests/test_posture.py::test_posture_refusals |
 | CL-06 | The child gets no credentials and a closed loopback model endpoint. | test | tests/test_child_spawn.py::test_env_is_an_allow_list_without_yolo_or_secrets |
 | CL-07 | Every built-in test call stays inside the sandbox. | test | tests/test_containment.py::test_every_rendered_call_stays_inside |
@@ -28,9 +28,9 @@
 | CL-20 | Leave the implicated plugin out, run again, and the cell and the contract clear. | test | tests/test_drill_fixtures_e2e.py::test_without_rerun_clears_the_cell_and_the_contract |
 | CL-21 | A plugin that did not load is reported LOAD FAILED, never PASSED THROUGH. | test | tests/test_matrix.py::test_unconfirmed_plugin_is_load_failed_never_passed_through |
 | CL-22 | PROVING GROUND deletes only temp directories it created. | test | tests/test_cleanup.py::test_unowned_directories_are_never_swept |
-| CL-23 | The committed fixture drill recorded 10 test calls, 3 plugins, 3 distinct effects and 1 cross-plugin finding. | grep | docs/fixture-report.json :: "tally": "10 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding" |
-| CL-24 | In that drill the model was not called: 61 scripted steps answered by PROVING GROUND, 0 provider calls. | grep | docs/fixture-report.json :: NOT CALLED \(scripted turn: 61 llm_execution steps answered by PROVING GROUND, 0 provider calls\) |
-| CL-25 | That drill took 28.9 s on a warm cache. | grep | docs/fixture-report.json :: "wall_s": 28\.8[5-9]\d* |
+| CL-23 | The committed fixture drill recorded 24 test calls, 3 plugins, 3 distinct effects and 1 cross-plugin finding. | grep | docs/fixture-report.json :: "tally": "24 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding" |
+| CL-24 | In that drill the model was not called: 131 scripted steps answered by PROVING GROUND, 0 provider calls. | grep | docs/fixture-report.json :: NOT CALLED \(scripted turn: 131 llm_execution steps answered by PROVING GROUND, 0 provider calls\) |
+| CL-25 | That drill took 23.2 s on a warm cache. | grep | docs/fixture-report.json :: "wall_s": 23\.2\d* |
 | CL-26 | That drill left 0 drill processes and 0 drill roots. | grep | docs/fixture-report.json :: "leftover_processes": 0,\s*"leftover_roots": 0 |
 | CL-27 | In that drill fx_guard only saw TC03's original command in the stack, and the rewritten command ran (REWRITE_UNSEEN_BY). | grep | docs/fixture-report.json :: "kind": "REWRITE_UNSEEN_BY",\s*"call_id": "TC03" |
 | CL-28 | In that drill TC04's removed FAILED line is attributed to fx_trimmer by one solo run. | grep | docs/fixture-report.md :: attribution TC04 RESULT CHANGED: solo-match — observed in one solo run: fx_trimmer |
@@ -43,9 +43,9 @@
 | CL-35 | A core approval gate hidden by a stack block is not reported as a masked plugin effect (58cab27). | test | tests/test_matrix.py::test_core_approval_gate_hidden_by_a_stack_block_is_not_masked |
 | CL-36 | The cell detail says its attribution is the full-stack one (5e39586). | test | tests/test_cell_detail.py::test_solo_cell_detail_labels_attribution_as_the_full_stack_one |
 | CL-37 | A plugin's change on top of core truncation is attributed to the plugin (bcfbe4c). | test | tests/test_matrix.py::test_plugin_result_change_over_core_truncation_is_attributed_to_the_plugin |
-| CL-38 | The real catalog stack run recorded 10 test calls, 5 plugins, 10 distinct effects and 1 cross-plugin finding. | grep | docs/real-stack-report.md :: 10 test calls · 5 plugins · 10 distinct effects recorded · 1 cross-plugin finding |
-| CL-39 | Its finding is MASKED_IN_STACK on TC05 for hermes-detox. | grep | docs/real-stack-report.md :: MASKED_IN_STACK: hermes-detox RESULT CHANGED TC05 on its own; in the full stack that effect does not reach the model\. |
-| CL-40 | In that run readonly-guard stops TC05 alone and in the full stack. | grep | docs/real-stack-report.md :: TC05 long output \x7c RESULT CHANGED \(core\) \x7c PASSED THROUGH \x7c RESULT CHANGED \x7c PASSED THROUGH \x7c BLOCKED \x7c PASSED THROUGH \x7c BLOCKED \x7c |
+| CL-38 | The real catalog stack run recorded 24 test calls, 5 plugins, 22 distinct effects and 2 cross-plugin findings. | grep | docs/real-stack-report.md :: 24 test calls · 5 plugins · 22 distinct effects recorded · 2 cross-plugin findings |
+| CL-39 | Its findings are MASKED_IN_STACK on TC05 for hermes-detox and on TC12 for progress-squash. | grep | docs/real-stack-report.md :: (?s)MASKED_IN_STACK: readonly-guard BLOCKED TC05 in the full stack.*hermes-detox RESULT CHANGED\..*MASKED_IN_STACK: readonly-guard BLOCKED TC12 in the full stack.*progress-squash RESULT CHANGED\. |
+| CL-40 | In that run readonly-guard stops TC05 alone and in the full stack. | grep | docs/real-stack-report.md :: TC05 long output \x7c RESULT CHANGED \(core\) \x7c RESULT CHANGED \(core\) \x7c RESULT CHANGED \(core \+ plugin\) \x7c RESULT CHANGED \(core\) \x7c BLOCKED \x7c RESULT CHANGED \(core\) \x7c BLOCKED · masks a solo effect \x7c |
 | CL-41 | As of 2026-11-11, xray (#149414), crash-test (#151102), policy-backtester (#151434) and benchforge (#152504) are merged catalog entries. | grep | docs/field-2026-11-11.md :: (?s)#149414 MERGED.*xray.*#151102 MERGED.*crash-test.*#151434 MERGED.*policy-backtester.*#152504 MERGED.*benchforge |
 | CL-41b | Each of those four entries is described in the README by a sentence quoted verbatim from its own PR description. | grep | docs/field-2026-11-11.md :: (?s)X-Ray sets traps for plugins instead of reading their code\..*For one armed turn it makes tools fail the way real systems fail.*a test harness for Hermes guardrails: what a rule would break, and what it would miss\..*BenchForge is the flight simulator for AI-written Arduino firmware\. |
 | CL-42 | As of 2026-11-11, catalog title searches for plugin stack, hook chain, plugin conflict, plugins interact and hook order returned no PR about running several installed plugins together. | grep | docs/field-2026-11-11.md :: These title searches returned no catalog PR about running several installed plugins together |
@@ -84,7 +84,7 @@
 | CL-74 | A control character (such as a newline) in any argument of a `--calls` or cross-check call is refused (2b2ff93). | test | tests/test_call_grammar.py::test_control_characters_never_pass_in_any_string_argument |
 | CL-74b | Each allowed program has its own flag allow-list, so `curl -K FILE` is refused and curl must start with -q (2b2ff93). | test | tests/test_call_grammar.py::test_only_allow_listed_flags_pass |
 | CL-75 | The GitHub Pages site serves the committed fixture report. | grep | docs/index.html :: href="fixture-report\.html" |
-| CL-76 | The committed fixture report comes from the drill at 8a7cf74 and is served on GitHub Pages without installing anything. | grep | README.md :: https://dmustapha\.github\.io/hermes-proving-ground/fixture-report\.html \(the fixture drill at 8a7cf74\) |
+| CL-76 | The committed fixture report comes from the drill at 3fb1469 and is served on GitHub Pages without installing anything. | grep | README.md :: https://dmustapha\.github\.io/hermes-proving-ground/fixture-report\.html \(the fixture drill at 3fb1469\) |
 | CL-77 | On a cold cache the first run copies Hermes's runtime from your own Hermes installs, announced in one line, without downloading. | test | tests/test_warm_up.py::test_a_cold_cache_warms_from_the_local_hermes_installs_without_downloading |
 | CL-77b | Only when there are no local installs, or the copy is refused, does Hermes's own installer download the runtime (about 650 MB, once). | test | tests/test_warm_up.py::test_a_refused_local_copy_falls_back_to_the_download |
 | CL-77c | The slash command never downloads inside your session; on a cold cache with local installs it copies them first. | test | tests/test_slash.py::test_a_cold_cache_with_local_installs_starts_the_drill_which_copies_but_never_downloads |

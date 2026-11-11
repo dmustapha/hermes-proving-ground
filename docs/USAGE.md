@@ -9,7 +9,7 @@ The README has the quickstart. This page has the rest: actions and options, what
 | `hermes provingground show` | Lists the cells with an effect in the latest saved report. `show TC04 --column stack` prints one cell step by step; `show --plugins` lists each plugin's declared hooks and the plugins loaded in each column; `show --html PATH` (or `--json`, `--markdown`, `--write-contract`) exports the saved report again. |
 | `hermes provingground lock FILE` | Runs the drill and writes an `expect:` contract pinning every built-in cell to what it observed. |
 | `hermes provingground diff A.json B.json` | Compares two saved reports without running a drill. Exit 0 when nothing changed, 6 when something did. |
-| `hermes provingground warm` | Prepares the isolated runtime once. It copies it from your Hermes installs when there are any (no network, the source is only read, the copy is checked to start), and otherwise lets Hermes's own installer download it (about 650 MB, allowed up to 15 minutes). `warm --status` only says whether the runtime is ready for the temp directory of the current shell; `warm --from DIR` copies from another installs dir. A drill on a cold cache warms it the same way first. |
+| `hermes provingground warm` | Prepares the isolated runtime once. It copies it from your Hermes installs when there are any (no network, the source is only read, the copy is checked to start), and otherwise lets Hermes's own installer download it (about 650 MB, allowed up to 15 minutes; a failed download starts over, so rerun `warm`). `warm --status` only says whether the runtime is ready for the temp directory of the current shell; `warm --from DIR` copies from another installs dir. A drill on a cold cache warms it the same way first. |
 | `hermes provingground sweep` | Removes stale temporary drill roots left by an interrupted drill (only roots PROVING GROUND marked). |
 
 ## What each cell means
@@ -47,7 +47,7 @@ A report reads top to bottom: the tally and each finding in plain words, the mat
 Also accepted, and left out of the short help: `--jobs N` (columns in parallel, default 5), `--timeout SECONDS` (per column, default 120), `--hermes-bin PATH`, `--quiet` (no live table) and `--no-color` (the `NO_COLOR` environment variable works too).
 
 ## Test your own guard
-Add your own trigger as a user call and declare what each column should show:
+Add your own trigger as a user call and declare what each column should show. User terminal calls are a closed grammar: `echo` or `printf` whose first word is not a flag (later words, flags included, are printed, never run), `seq` without flags, `curl -q` to the run's own recorder, and `chmod` with an octal mode on sandbox paths; no pipes, `;`, `&`, `$`, redirection, globs, `..` or `~`. Write your trigger as text your guard matches, e.g. `echo git push --force`.
 
 ```yaml
 # my-calls.yaml
@@ -102,16 +102,16 @@ The Hermes v0.23.1 composition rules this depends on:
 These rules are version-scoped. A Hermes upgrade that changes one of them changes the matrix, which is what contracts are for.
 
 ## The committed fixture drill
-[fixture-report.md](fixture-report.md) (JSON: [fixture-report.json](fixture-report.json), HTML: [fixture-report.html](fixture-report.html)) is one run of `hermes provingground --fixtures` at commit 8a7cf74 on Hermes v0.23.1, run 2026-11-11: `10 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding`, `model: NOT CALLED (scripted turn: 61 llm_execution steps answered by PROVING GROUND, 0 provider calls)`, 28.9 s on a warm cache, 0 drill processes and 0 drill roots left after it. Its Markdown and HTML views are rendered from that JSON by the current report layout.
+[fixture-report.md](fixture-report.md) (JSON: [fixture-report.json](fixture-report.json), HTML: [fixture-report.html](fixture-report.html)) is one run of `hermes provingground --fixtures` at commit 3fb1469 on Hermes v0.23.1, run 2026-11-11: `24 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding`, `model: NOT CALLED (scripted turn: 131 llm_execution steps answered by PROVING GROUND, 0 provider calls)`, 23.2 s on a warm cache, 0 drill processes and 0 drill roots left after it. Its Markdown and HTML views are rendered from that JSON by the current report layout.
 
 TC04 in the full stack: the tool printed a three-line test log with one FAILED line, and the model would have received it without that line. One solo run names `fx_trimmer`.
 
 ![TC04 x FULL STACK cell detail in the HTML report](cell-detail.png)
 
 ## A real catalog stack
-Five catalog plugins at their pinned catalog SHAs, installed into a separate Hermes home: canary-trap, hermes-detox, progress-squash, readonly-guard, safe-swap. One run on Hermes v0.23.1 (2026-11-11) recorded `10 test calls · 5 plugins · 10 distinct effects recorded · 1 cross-plugin finding` ([real-stack-report.md](real-stack-report.md)).
+Five catalog plugins at their pinned catalog SHAs, installed into a separate Hermes home: canary-trap, hermes-detox, progress-squash, readonly-guard, safe-swap. One run on Hermes v0.23.1 (2026-11-11) recorded `24 test calls · 5 plugins · 22 distinct effects recorded · 2 cross-plugin findings` ([real-stack-report.md](real-stack-report.md)).
 
-The finding is `MASKED_IN_STACK` on TC05: alone, hermes-detox changes the long-output result; in the full stack, readonly-guard in its default read-only mode stops TC05 before the call runs, so hermes-detox's change does not reach the model. Each plugin did what its catalog entry describes. Only the combination is new information.
+Both findings are `MASKED_IN_STACK`: alone, hermes-detox changes TC05's long-output result and progress-squash changes TC12's progress-bar output; in the full stack, readonly-guard in its default read-only mode stops both calls before they run, so neither change reaches the model. Each plugin did what its catalog entry describes. Only the combination is new information.
 
 ## What we found while building it
 These are facts about Hermes's plugin seams, not about any plugin. Each is written up as a Hermes issue draft (not yet filed).

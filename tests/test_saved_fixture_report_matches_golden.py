@@ -1,7 +1,8 @@
 # File: tests/test_saved_fixture_report_matches_golden.py
 # A saved JSON report of `hermes provingground --fixtures` (from an installed copy, on any OS) must match the same
 # golden matrix the in-process drill pins, with no aborted column and zero leftover processes and roots.
-# CI's Linux drill sets PG_FIXTURE_REPORT to the report it just wrote; without it these tests are skipped.
+# CI's Linux drill sets PG_FIXTURE_REPORT to the report it just wrote; without it the committed (and hosted)
+# docs/fixture-report.json is checked, so the published report cannot drift from the golden.
 from __future__ import annotations
 
 import json
@@ -14,12 +15,12 @@ from test_golden_fixture_matrix import CALLS, COLUMNS, CORE, FIRED, SNAPSHOT, li
 REPORT_ENV = "PG_FIXTURE_REPORT"
 GOLDEN_TALLY = "24 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding"
 
-pytestmark = pytest.mark.skipif(not os.environ.get(REPORT_ENV), reason=f"{REPORT_ENV} names no saved report")
+COMMITTED_REPORT = Path(__file__).resolve().parents[1] / "docs" / "fixture-report.json"
 
 
 @pytest.fixture(scope="module")
 def report() -> dict:
-    return json.loads(Path(os.environ[REPORT_ENV]).read_text(encoding="utf-8"))
+    return json.loads(Path(os.environ.get(REPORT_ENV) or COMMITTED_REPORT).read_text(encoding="utf-8"))
 
 
 def test_saved_report_matrix_is_the_golden_matrix(report) -> None:

@@ -75,7 +75,7 @@ def build_settings(args: argparse.Namespace) -> runner.RunnerSettings:
         raise safety.Refusal("SANDBOX_UNSUPPORTED", "drills run on macOS and Linux only.")
     temp_base = drill_temp_base()
     if not safety.under_temp_base(temp_base):
-        raise safety.Refusal("SANDBOX_UNSUPPORTED", f"temp dir {temp_base} is not under a system temp base.")
+        raise safety.Refusal("SANDBOX_UNSUPPORTED", f"temp dir {temp_base} is not under a system temp base; run with TMPDIR=/tmp.")
     return runner.RunnerSettings(hermes_bin=find_hermes(getattr(args, "hermes_bin", None)), pg_source=PG_SOURCE,
                                  warm_cache=temp_base / "provingground-cache" / "installs", temp_base=temp_base,
                                  cell_timeout_s=float(getattr(args, "timeout", 120.0)), jobs=int(getattr(args, "jobs", DEFAULT_JOBS)),
@@ -702,6 +702,7 @@ USAGE_EPILOG = """actions:
 
 outcomes (one per cell; a stack cell that carries a cross-plugin finding says so, e.g. "unseen by fx_guard"):
   BLOCKED · REWROTE · RESULT CHANGED · APPROVAL-GATED · PASSED THROUGH
+  middleware: REQUEST REWRITTEN · MODEL REPLY CHANGED · EXECUTION REPLACED; --attended: ASKED (a person answered)
   more: ESCAPED, ERRORED, LOAD FAILED, NOT RUN, N/A (statuses, never results); "(core)" = Hermes itself
 
 examples:
@@ -710,6 +711,9 @@ examples:
   hermes provingground --calls my-calls.yaml --check --json pg-report.json
   hermes provingground lock stack.lock.yaml --fixtures      # later: --calls stack.lock.yaml --check
   hermes provingground --compare latest --focus
+
+user calls (--calls): a closed grammar: echo/printf whose first word is not a flag (later words are printed),
+  seq without flags, curl -q to the run's recorder, chmod with an octal mode on sandbox paths; no | ; & $ .. ~
 
 also accepted: --jobs N, --timeout SECONDS, --hermes-bin PATH, --quiet, --no-color (NO_COLOR is honoured)
 

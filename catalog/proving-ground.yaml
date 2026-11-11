@@ -18,7 +18,7 @@ screenshots:
 readme: true
 platforms: [macos, linux]
 known_issues:
-  - "Spawns child hermes processes with throwaway homes under the temp dir; the first run prepares Hermes's runtime once (about 1 minute, ~650 MB downloaded by Hermes's own installer)."
+  - "Spawns child hermes processes with throwaway homes under the temp dir; the first run copies Hermes's runtime from your local installs (no network); only without any does Hermes's own installer download ~650 MB once (up to 15 min)."
   - "Subject plugins run with your own file permissions; a call that leaves the temp dir is detected after it ran, not prevented."
   - "A session-level /yolo toggle has no public API, so only HERMES_YOLO_MODE and approvals.mode: off are detected."
   - "Other plugins' own network code cannot be blocked by a plugin; it would only see synthetic test data."

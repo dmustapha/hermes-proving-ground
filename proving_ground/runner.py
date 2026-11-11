@@ -870,7 +870,7 @@ def plan_columns(subjects: Sequence[PluginSource]) -> list[ColumnSpec]:
 
 def _run_throwaway(settings: RunnerSettings, argv: Sequence[str]) -> subprocess.CompletedProcess:
     """Run a short Hermes command in a throwaway PG root (installs -> warm cache), so the real Hermes tree is not
-    touched: even --version takes a lease on the runtime environment it resolves (found in review)."""
+    touched: even --version takes a lease on the runtime environment it resolves."""
     root = create_drill_root(settings.temp_base)
     try:
         ensure_private_cache(settings.warm_cache)

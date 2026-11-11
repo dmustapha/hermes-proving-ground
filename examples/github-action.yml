@@ -37,7 +37,7 @@ jobs:
           mkdir -p "$home/plugins/$PLUGIN_NAME"
           tar -C "$PLUGIN_DIR" --exclude=.git -cf - . | tar -C "$home/plugins/$PLUGIN_NAME" -xf -
           hermes plugins enable "$PLUGIN_NAME"
-      - name: prepare the drill runtime once (Hermes's own installer, about a minute)
+      - name: prepare the drill runtime once (copied from local Hermes installs; else Hermes's own installer, up to 15 min)
         run: hermes provingground warm
       - name: wiring test with your contract
         run: hermes provingground --calls "$CALLS_FILE" --check --no-color --json pg-report.json --markdown pg-report.md

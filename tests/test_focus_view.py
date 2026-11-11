@@ -43,17 +43,18 @@ def test_focus_markdown_hides_quiet_rows_and_names_them() -> None:
     m = _committed()
     full, focused = report.render_markdown(m), report.render_markdown(m, focus=True)
     assert _rows(full) == [c.id for c in m.calls]
-    assert _rows(focused) == ["TC02", "TC03", "TC04", "TC05", "TC10"]  # core-only rows stay: they are not quiet
-    assert "focus: 5 of 10 rows hidden, every cell in them PASSED THROUGH (N/A cells aside): TC01, TC06, TC07, " \
-           "TC08, TC09" in focused
-    assert "Observed on 10 synthetic inputs in a sandbox." in focused
+    assert _rows(focused) == ["TC02", "TC03", "TC04", "TC05", "TC10", "TC11", "TC16"]  # core-only rows stay
+    assert "focus: 17 of 24 rows hidden, every cell in them PASSED THROUGH or NOT EXECUTED (probe) (N/A cells " \
+           "aside): TC01, TC06, TC07, TC08, TC09, TC12, TC13, TC14, TC15, TC17, TC18, TC19, TC20, TC21, TC22, TC23, " \
+           "TC24" in focused
+    assert "Observed on 24 synthetic inputs in a sandbox." in focused
 
 
 def test_focus_terminal_keeps_the_drill_count_and_hides_quiet_rows() -> None:
     m = _committed()
     text = report.render_terminal(m, color=False, width=160, focus=True)
-    assert "Observed on 10 synthetic inputs in a sandbox." in text
-    assert "TC04" in text and "TC01 plain command" not in text and "focus: 5 of 10 rows hidden" in text
+    assert "Observed on 24 synthetic inputs in a sandbox." in text
+    assert "TC04" in text and "TC01 plain command" not in text and "focus: 17 of 24 rows hidden" in text
     assert report.forbidden_claims(text) == []
 
 
@@ -75,7 +76,7 @@ def test_html_toggle_is_css_only_and_checked_by_focus() -> None:
     plain, focused = report.render_html(m), report.render_html(m, focus=True)
     assert '<input type="checkbox" id="focus">' in plain and '<input type="checkbox" id="focus" checked>' in focused
     assert "#focus:checked~#matrix tr.quiet{display:none}" in plain
-    assert plain.count("<tr class=quiet>") == 5
+    assert plain.count("<tr class=quiet>") == 17
     for page in (plain, focused):
         assert "<script" not in page and not re.search(r"(src|href)=[\"']?https?:", page)
         assert report.forbidden_claims(page) == []
@@ -84,5 +85,5 @@ def test_html_toggle_is_css_only_and_checked_by_focus() -> None:
 def test_focus_flag_reaches_the_markdown_and_html_exports(tmp_path) -> None:
     md, page = tmp_path / "r.md", tmp_path / "r.html"
     cli.write_exports(_committed(), argparse.Namespace(markdown_out=str(md), html_out=str(page), focus=True))
-    assert "focus: 5 of 10 rows hidden" in md.read_text(encoding="utf-8")
+    assert "focus: 17 of 24 rows hidden" in md.read_text(encoding="utf-8")
     assert 'id="focus" checked' in page.read_text(encoding="utf-8")
