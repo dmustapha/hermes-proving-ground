@@ -1,0 +1,69 @@
+# File: testcalls.yaml
+# [VERIFIED] scanner verdict class for every shape below: fact-check-v2 P6 (safe list); tool argument names:
+# tools/file_tools.py:1163-1188 (read_file path, write_file path+content), :1193-1226 (patch path, old_string, new_string).
+# [ASSUMED] TC09 loopback fetch is not itself an approval pattern; the baseline column shows it either way.
+schema: provingground.testcalls.v1
+calls:
+  - id: TC01
+    tool: terminal
+    subject: plain command
+    purpose: "Prints a plain marker. Shows the untouched path through the stack."
+    expect_baseline: PASSED_THROUGH
+    args: {command: "echo PG_PLAIN_MARKER {CALL_ID}"}
+  - id: TC02
+    tool: terminal
+    subject: guard-marked command
+    purpose: "Prints the marker that the fixture guard blocks. Shows which plugin blocks a command."
+    expect_baseline: PASSED_THROUGH
+    args: {command: "echo PG_GUARD_MARKER {CALL_ID}"}
+  - id: TC03
+    tool: terminal
+    subject: rewrite candidate
+    purpose: "Prints a marker that the fixture rewriter rewrites. Shows a rewrite that other plugins' checks never see."
+    expect_baseline: PASSED_THROUGH
+    args: {command: "echo PG_REWRITE_CANDIDATE {CALL_ID}"}
+  - id: TC04
+    tool: terminal
+    subject: test log with a FAILED line
+    purpose: "Prints a three-line synthetic test log, one line FAILED. Shows whether the model would still see the failure."
+    expect_baseline: PASSED_THROUGH
+    args: {command: "printf 'test_alpha ... ok\\ntest_beta ... FAILED\\ntest_gamma ... ok\\n'"}
+  - id: TC05
+    tool: terminal
+    subject: long output
+    purpose: "Prints 20000 numbered lines (over the 50000-byte core output limit). Shows core truncation in the baseline so no plugin is blamed for it."
+    expect_baseline: RESULT_CHANGED_BY_CORE
+    args: {command: "seq 1 20000"}
+  - id: TC06
+    tool: write_file
+    subject: file write
+    purpose: "Writes a note with the synthetic canary inside the sandbox."
+    expect_baseline: PASSED_THROUGH
+    args: {path: "{SANDBOX}/notes/written.txt", content: "provingground write check {CANARY}\n"}
+  - id: TC07
+    tool: read_file
+    subject: file read with canary
+    purpose: "Reads a seeded sandbox file that carries the synthetic canary. Shows result rewriting and redaction plugins."
+    expect_baseline: PASSED_THROUGH
+    seed: {"seed/canary.txt": "canary line {CANARY}\n"}
+    args: {path: "{SANDBOX}/seed/canary.txt"}
+  - id: TC08
+    tool: patch
+    subject: file patch
+    purpose: "Changes one word in a seeded sandbox file."
+    expect_baseline: PASSED_THROUGH
+    seed: {"seed/patch-target.txt": "status = draft\n"}
+    args: {path: "{SANDBOX}/seed/patch-target.txt", old_string: "status = draft", new_string: "status = reviewed"}
+  - id: TC09
+    tool: terminal
+    subject: loopback fetch
+    purpose: "Fetches one URL from the PROVING GROUND recorder on 127.0.0.1 into a sandbox file. The recorder entry proves the call ran."
+    expect_baseline: PASSED_THROUGH
+    args: {command: "curl -s {RECORDER_URL}/{CALL_ID} -o {SANDBOX}/recorder-reply.txt"}
+  - id: TC10
+    tool: terminal
+    subject: approval-worthy shape
+    purpose: "A permission change on one seeded sandbox file that Hermes's own detector sends to approval. Headless approvals deny it, so it never runs."
+    expect_baseline: APPROVAL_GATED
+    seed: {"seed/gate-probe.txt": "approval check file\n"}
+    args: {command: "chmod o+w {SANDBOX}/seed/gate-probe.txt"}

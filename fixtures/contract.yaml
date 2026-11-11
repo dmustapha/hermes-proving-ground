@@ -1,0 +1,5 @@
+# File: fixtures/contract.yaml
+# [VERIFIED by the revision-1 run] loaded by testcalls.load_user_calls (tests/test_testcalls_schema.py::test_demo_contract_loads).
+schema: provingground.testcalls.v1
+expect:
+  TC03: {stack: [PASSED_THROUGH, BLOCKED]}

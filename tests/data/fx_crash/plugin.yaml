@@ -1,0 +1,6 @@
+# File: tests/data/fx_crash/plugin.yaml
+name: fx_crash
+version: "0.1.0"
+description: "Test-only: register() raises, to prove a crashing plugin does not break the drill."
+author: dmustapha
+provides_hooks: [pre_tool_call]

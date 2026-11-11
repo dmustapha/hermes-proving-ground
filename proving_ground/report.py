@@ -1,0 +1,313 @@
+# File: proving_ground/report.py  (part 1 of 3: wording, JSON serialization)
+# [VERIFIED] rich==14.3.4 is pinned in Hermes core (pyproject.toml:52); rich.table.Table / rich.console.Console are its
+# public API. [VERIFIED by the §9.1 run] rendering logic. Pure: returns strings, never writes files.
+"""Render a Matrix as a terminal table, Markdown, self-contained HTML, JSON, or one cell's detail."""
+from __future__ import annotations
+
+import difflib
+import html
+import io
+import re
+from dataclasses import asdict
+from typing import Any, Mapping
+
+from . import matrix as mx
+
+REPORT_SCHEMA = "provingground.report.v1"
+HEADLINE = "PROVING GROUND · a wiring test for your plugin stack"
+OBSERVED = "Observed on {n} synthetic inputs in a sandbox."
+SCOPE_NOTE = ("This report describes what your plugins did to these specific test calls. "
+              "It does not grade your stack, and results depend on each plugin's configuration.")
+FORBIDDEN_CLAIMS = (re.compile(r"\bsafe\b", re.I), re.compile(r"\bsecure[ds]?\b", re.I),
+                    re.compile(r"\bprotected\b", re.I), re.compile(r"\bguarantee", re.I),
+                    re.compile(r"\bcertif", re.I), re.compile(r"\bpassed\b(?!\s+through)", re.I))
+MAX_DETAIL_LINES = 40
+STYLE = {mx.Outcome.BLOCKED: "bold cyan", mx.Outcome.REWROTE: "bold yellow", mx.Outcome.RESULT_CHANGED: "bold magenta",
+         mx.Outcome.APPROVAL_GATED: "bold blue", mx.Outcome.PASSED_THROUGH: "dim", mx.Outcome.ESCAPED: "bold red",
+         mx.Outcome.ERRORED: "red", mx.Outcome.LOAD_FAILED: "red", mx.Outcome.NOT_RUN: "dim",
+         mx.Outcome.NOT_APPLICABLE: "dim"}
+QUOTE_PREFIX = "│ "  # every line of plugin-authored text (raw output, block messages) is quoted, never PG's words
+QUOTE_TITLE = "quoted from the plugin stack, not PROVING GROUND's words"
+_HTML_QUOTED = re.compile(r'<pre class="quoted">.*?</pre>', re.S)
+ANSI = {"bold cyan": "\033[1;36m", "bold yellow": "\033[1;33m", "bold magenta": "\033[1;35m", "bold blue": "\033[1;34m",
+        "dim": "\033[2m", "bold red": "\033[1;31m", "red": "\033[31m"}
+RESET = "\033[0m"
+
+
+def strip_quoted(text: str) -> str:
+    """PG-authored text only: drop quoted plugin lines (terminal/Markdown) and quoted <pre> blocks (HTML)."""
+    text = _HTML_QUOTED.sub("", text)
+    return "\n".join(line for line in text.splitlines() if not line.lstrip("- ").startswith(QUOTE_PREFIX))
+
+
+def forbidden_claims(text: str) -> list[str]:
+    """Forbidden grading words in PROVING GROUND's own words; quoted plugin output is exempt (PRD-F12)."""
+    own = strip_quoted(text)
+    return [p.pattern for p in FORBIDDEN_CLAIMS if p.search(own)]
+
+
+def quoted(lines: list[str]) -> list[str]:
+    return [QUOTE_PREFIX + line for line in lines]
+
+
+def provenance(column: str) -> str:
+    """Mandatory provenance of every cell: baseline, solo, stack or cross-check."""
+    if column in ("baseline", "baseline-repeat"):
+        return "baseline"
+    return {"solo": "solo", "crosscheck": "cross-check"}.get(column.partition(":")[0], "stack")
+
+
+def cell_label(cell: mx.Cell) -> str:
+    label = " + ".join(mx.LABELS[o] for o in sorted(cell.outcomes, key=mx.PRECEDENCE.index))
+    return label + (" (core)" if cell.core else "") + (" ~" if cell.unstable else "")
+
+
+def column_title(name: str) -> str:
+    return {"baseline": "baseline (no plugins)", "stack": "FULL STACK"}.get(name, name.removeprefix("solo:"))
+
+
+def matrix_to_dict(m: mx.Matrix) -> dict[str, Any]:
+    cells = [{"column": c.column, "call_id": c.call_id, "outcomes": [o.value for o in c.outcomes],
+              "primary": c.primary.value, "hop": c.hop, "core": c.core, "unstable": c.unstable, "note": c.note,
+              "provenance": provenance(c.column)}
+             for c in m.cells.values()]
+    calls = [{**asdict(c), "expect": {k: list(v) for k, v in (c.expect or {}).items()}} for c in m.calls]
+    return {"schema": REPORT_SCHEMA, "headline": HEADLINE, "observed": OBSERVED.format(n=m.conditions.n_calls),
+            "tally": mx.tally(m), "conditions": asdict(m.conditions), "calls": calls,
+            "columns": list(m.columns), "cells": cells,
+            "attributions": [{**asdict(a), "outcome": a.outcome.value} for a in m.attributions],
+            "findings": [asdict(f) for f in m.findings],
+            "observations": {col: {cid: asdict(o) for cid, o in obs.items()} for col, obs in m.observations.items()},
+            "unstable": sorted(m.unstable), "skipped": [list(s) for s in m.skipped],
+            "needs_env": list(m.needs_env), "aborted": dict(m.aborted),
+            "load_failed": {k: list(v) for k, v in m.load_failed.items()},
+            "unreplayable": [[cid, list(r)] for cid, r in m.unreplayable]}
+
+
+def _cell_from(raw: Mapping[str, Any]) -> mx.Cell:
+    return mx.Cell(raw["column"], raw["call_id"], tuple(mx.Outcome(o) for o in raw["outcomes"]),
+                   raw.get("hop"), bool(raw.get("core")), bool(raw.get("unstable")), raw.get("note", ""))
+
+
+def _call_from(raw: Mapping[str, Any]) -> mx.CallInfo:
+    return mx.CallInfo(**{**raw, "expect": {k: tuple(v) for k, v in (raw.get("expect") or {}).items()}})
+
+
+def _obs_from(raw: Mapping[str, Any]) -> mx.CallObservation:
+    return mx.CallObservation(**{**raw, "escaped_reasons": tuple(raw.get("escaped_reasons") or ())})
+
+
+def matrix_from_dict(data: Mapping[str, Any]) -> mx.Matrix:
+    if data.get("schema") != REPORT_SCHEMA:
+        raise ValueError(f"not a {REPORT_SCHEMA} document")
+    cond = data["conditions"]
+    conditions = mx.DrillConditions(**{**cond, "load_order": tuple(cond["load_order"])})
+    cells = {(c["column"], c["call_id"]): _cell_from(c) for c in data["cells"]}
+    attributions = tuple(mx.Attribution(a["call_id"], mx.Outcome(a["outcome"]), a["kind"], tuple(a["plugins"]),
+                                        a.get("note", "")) for a in data["attributions"])
+    findings = tuple(mx.Finding(f["kind"], f["call_id"], tuple(f["plugins"]), f["text"]) for f in data["findings"])
+    observations = {col: {cid: _obs_from(o) for cid, o in obs.items()} for col, obs in data["observations"].items()}
+    return mx.Matrix(conditions, tuple(_call_from(c) for c in data["calls"]), tuple(data["columns"]), cells,
+                     attributions, findings, observations, frozenset(data.get("unstable") or ()),
+                     tuple(tuple(s) for s in data.get("skipped") or ()), tuple(data.get("needs_env") or ()),
+                     dict(data.get("aborted") or {}),
+                     {k: tuple(v) for k, v in (data.get("load_failed") or {}).items()},
+                     tuple((cid, tuple(r)) for cid, r in data.get("unreplayable") or ()))
+
+# File: proving_ground/report.py  (part 2 of 3: terminal table, Markdown, cell detail)
+
+
+def conditions_lines(m: mx.Matrix) -> list[str]:
+    c = m.conditions
+    network = f"{c.connects_total} connects, {c.connects_non_loopback} outside loopback"
+    left = ("not measured" if c.leftover_processes < 0 else
+            f"{c.leftover_processes} drill processes, {c.leftover_roots} drill roots left after the run")
+    return [f"model: {c.model}", f"provider: {c.provider}", f"approvals: {c.approvals}",
+            f"credentials: {c.credentials}",
+            f"network seen inside the child Hermes process (not its subprocesses): {network}",
+            f"sandbox: {c.sandbox}", f"Hermes: {c.hermes_version}", c.baseline_note,
+            f"load order given to the child (requires_plugins first, then alphabetical): {', '.join(c.load_order) or 'none'}",
+            f"coverage: {c.coverage or 'n/a'}", f"cleanup: {left}",
+            f"wall time: {c.wall_s:.1f}s · started {c.started_at}"]
+
+
+def _rich_table(m: mx.Matrix) -> Any:
+    from rich.table import Table
+
+    table = Table(title=f"{HEADLINE}\n{OBSERVED.format(n=m.conditions.n_calls)}", show_lines=False, expand=False)
+    table.add_column("test call", style="bold", no_wrap=True)
+    for name in m.columns:
+        table.add_column(column_title(name), no_wrap=True)
+    for call in m.calls:
+        row = [f"{call.id} {call.subject}"]
+        for name in m.columns:
+            cell = m.cells.get((name, call.id))
+            row.append(f"[{STYLE[cell.primary]}]{cell_label(cell)}[/]" if cell else "pending")
+        table.add_row(*row)
+    return table
+
+
+def _plain_table(m: mx.Matrix, color: bool) -> str:
+    width = max(14, *(len(column_title(n)) for n in m.columns)) + 2
+    head = "test call".ljust(34) + "".join(column_title(n).ljust(width) for n in m.columns)
+    lines = [HEADLINE, OBSERVED.format(n=m.conditions.n_calls), head, "-" * len(head)]
+    for call in m.calls:
+        row = f"{call.id} {call.subject}"[:33].ljust(34)
+        for name in m.columns:
+            cell = m.cells.get((name, call.id))
+            text = (cell_label(cell) if cell else "pending").ljust(width)
+            row += f"{ANSI[STYLE[cell.primary]]}{text}{RESET}" if (cell and color) else text
+        lines.append(row)
+    return "\n".join(lines)
+
+
+def _footer_lines(m: mx.Matrix) -> list[str]:
+    lines = [mx.tally(m)]
+    lines += [f"• {f.kind}: {f.text}" for f in m.findings]
+    lines += [f"• attribution {a.call_id} {mx.LABELS[a.outcome]}: {a.kind} — {a.note}" for a in m.attributions]
+    lines += [f"• skipped {key}: {why}" for key, why in m.skipped]
+    lines += [f"• column {col} stopped: DRILL_ABORTED ({why})" for col, why in m.aborted.items()]
+    lines += [f"• LOAD FAILED in {col}: {', '.join(keys)} not confirmed loaded; its cells are not results"
+              for col, keys in m.load_failed.items()]
+    lines += [f"• cross-check of {cid} not replayed (fails the closed call grammar: {', '.join(why[:3])})"
+              for cid, why in m.unreplayable]
+    if m.unstable:
+        lines.append(f"• unstable between two baseline runs (never reported as RESULT CHANGED): {', '.join(sorted(m.unstable))}")
+    return lines + [SCOPE_NOTE, "Detail: hermes provingground show <CALL> --column <COLUMN>"]
+
+
+def render_terminal(m: mx.Matrix, color: bool = True, width: int = 160) -> str:
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+    except ImportError:
+        return "\n".join(conditions_lines(m) + ["", _plain_table(m, color), ""] + _footer_lines(m))
+    buffer = io.StringIO()
+    console = Console(file=buffer, force_terminal=color, no_color=not color, width=width)
+    console.print(Panel("\n".join(conditions_lines(m)), title="drill conditions", expand=False))
+    console.print(_rich_table(m))
+    for line in _footer_lines(m):
+        console.print(line, markup=False, highlight=False)
+    return buffer.getvalue()
+
+
+def _md_escape(text: str) -> str:
+    return text.replace("|", "\\|")
+
+
+def render_markdown(m: mx.Matrix) -> str:
+    lines = [f"# {HEADLINE}", "", f"**{OBSERVED.format(n=m.conditions.n_calls)}** {mx.tally(m)}", "",
+             "## Drill conditions", *[f"- {line}" for line in conditions_lines(m)], "", "## Matrix", "",
+             "| test call | " + " | ".join(column_title(n) for n in m.columns) + " |",
+             "|---|" + "---|" * len(m.columns)]
+    for call in m.calls:
+        cells = [cell_label(m.cells[(n, call.id)]) if (n, call.id) in m.cells else "pending" for n in m.columns]
+        lines.append(f"| {call.id} {_md_escape(call.subject)} | " + " | ".join(cells) + " |")
+    lines += ["", "## Findings and attribution", *[f"- {_md_escape(x.lstrip('• '))}" for x in _footer_lines(m)]]
+    return "\n".join(lines) + "\n"
+
+
+def _clip(text: str | None) -> list[str]:
+    lines = (text or "").splitlines() or [""]
+    if len(lines) <= MAX_DETAIL_LINES:
+        return lines
+    return lines[:MAX_DETAIL_LINES] + [f"[{len(lines) - MAX_DETAIL_LINES} more lines]"]
+
+
+def _diff(old: str | None, new: str | None) -> list[str]:
+    return list(difflib.unified_diff(_clip(old), _clip(new), "baseline delivered", "this column delivered", lineterm=""))
+
+
+def _attribution_for(m: mx.Matrix, call_id: str) -> list[str]:
+    return [f"{mx.LABELS[a.outcome]}: {a.kind} {', '.join(a.plugins)} — {a.note}"
+            for a in m.attributions if a.call_id == call_id] or ["no plugin effect to attribute"]
+
+
+def detail_sections(m: mx.Matrix, column: str, call_id: str) -> list[tuple[str, list[str]]]:
+    obs, base = m.observations[column][call_id], m.observations["baseline"][call_id]
+    cell = m.cells[(column, call_id)]
+    info = next(c for c in m.calls if c.id == call_id)
+    return [("cell", [f"{call_id} × {column_title(column)}: {cell_label(cell)}",
+                      f"provenance: {provenance(column)} column · call {info.provenance}", info.purpose, cell.note]),
+            ("attribution (observed in one solo run per plugin, against the zero-plugin baseline)",
+             _attribution_for(m, call_id)),
+            ("args as sent by PROVING GROUND (from the plan)", [str(dict(obs.injected_args))]),
+            (f"args that actually ran (after every plugin) · {QUOTE_TITLE}", quoted([str(dict(obs.final_args))])),
+            (f"1 · terminal output, raw · {QUOTE_TITLE}", quoted(_clip(obs.terminal_raw))),
+            (f"2 · tool result before result rewriters · {QUOTE_TITLE}", quoted(_clip(obs.tool_raw))),
+            (f"3 · delivered to the model · {QUOTE_TITLE}", quoted(_clip(obs.delivered))),
+            (f"delivered: baseline vs this column · {QUOTE_TITLE}",
+             quoted(_diff(base.delivered, obs.delivered) or ["identical"]))]
+
+
+def render_cell_detail(m: mx.Matrix, column: str, call_id: str) -> str:
+    out: list[str] = []
+    for title, lines in detail_sections(m, column, call_id):
+        out += [f"── {title}", *lines, ""]
+    return "\n".join(out)
+
+# File: proving_ground/report.py  (part 3 of 3: self-contained HTML)
+
+CSS = """
+:root{--bg:#fbfaf7;--fg:#1d1d1f;--muted:#6b6b70;--line:#e3e1dc;--card:#ffffff;
+--blocked:#0e7490;--rewrote:#a16207;--changed:#a21caf;--gated:#1d4ed8;--through:#8a8a8f;--escaped:#b91c1c;--errored:#b91c1c}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121214;--fg:#ececef;--muted:#9a9aa2;
+--line:#2a2a2e;--card:#1a1a1d;--blocked:#22d3ee;--rewrote:#facc15;--changed:#e879f9;--gated:#60a5fa;--through:#8a8a8f;
+--escaped:#f87171;--errored:#f87171}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 ui-sans-serif,system-ui,-apple-system,sans-serif}
+main{max-width:1180px;margin:0 auto;padding:24px 16px}h1{font-size:22px;margin:0 0 4px}.muted{color:var(--muted)}
+.box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:16px 0}
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid var(--line);
+padding:8px 10px;text-align:left;white-space:nowrap}td a{text-decoration:none;font-weight:600}
+.BLOCKED{color:var(--blocked)}.REWROTE{color:var(--rewrote)}.RESULT_CHANGED{color:var(--changed)}
+.APPROVAL_GATED{color:var(--gated)}.PASSED_THROUGH,.NOT_RUN,.NOT_APPLICABLE{color:var(--through)}
+.ESCAPED{color:var(--escaped)}.ERRORED,.LOAD_FAILED{color:var(--errored)}pre.quoted{border-left:3px solid var(--muted)}
+.panel{display:none}.panel:target{display:block}pre{background:var(--bg);border:1px solid var(--line);
+border-radius:8px;padding:10px;overflow-x:auto;font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
+.add{color:var(--changed)}.del{color:var(--rewrote)}
+"""
+
+
+def _anchor(column: str, call_id: str) -> str:
+    return "cell-" + re.sub(r"[^A-Za-z0-9_-]", "-", f"{column}-{call_id}")
+
+
+def _html_cell(m: mx.Matrix, column: str, call_id: str) -> str:
+    cell = m.cells.get((column, call_id))
+    if cell is None:
+        return "<td>pending</td>"
+    return (f'<td><a class="{cell.primary.value}" href="#{_anchor(column, call_id)}">'
+            f"{html.escape(cell_label(cell))}</a></td>")
+
+
+def _html_lines(lines: list[str]) -> str:
+    def cls(line: str) -> str:
+        return "add" if line.startswith("+") else "del" if line.startswith("-") else ""
+    return "\n".join(f'<span class="{cls(x)}">{html.escape(x)}</span>' for x in lines)
+
+
+def _html_panel(m: mx.Matrix, column: str, call_id: str) -> str:
+    parts = [f'<section class="panel box" id="{_anchor(column, call_id)}">']
+    for title, lines in detail_sections(m, column, call_id):
+        quote = bool(lines) and all(x.startswith(QUOTE_PREFIX) for x in lines)
+        body = [x[len(QUOTE_PREFIX):] for x in lines] if quote else lines
+        cls = ' class="quoted"' if quote else ""
+        parts.append(f"<h3>{html.escape(title)}</h3><pre{cls}>{_html_lines(body)}</pre>")
+    return "".join(parts) + '<p><a href="#matrix">back to the matrix</a></p></section>'
+
+
+def render_html(m: mx.Matrix) -> str:
+    head = "".join(f"<th>{html.escape(column_title(n))}</th>" for n in m.columns)
+    rows = "".join(f"<tr><th>{html.escape(c.id)} <span class='muted'>{html.escape(c.subject)}</span></th>"
+                   + "".join(_html_cell(m, n, c.id) for n in m.columns) + "</tr>" for c in m.calls)
+    panels = "".join(_html_panel(m, col, cid) for (col, cid) in m.cells if col in m.observations)
+    footer = "".join(f"<li>{html.escape(x.lstrip('• '))}</li>" for x in _footer_lines(m))
+    cond = "".join(f"<li>{html.escape(x)}</li>" for x in conditions_lines(m))
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>Proving Ground Report</title>'
+            f"<style>{CSS}</style></head><body><main><h1>{html.escape(HEADLINE)}</h1>"
+            f"<p class='muted'>{html.escape(OBSERVED.format(n=m.conditions.n_calls))} {html.escape(mx.tally(m))}</p>"
+            f"<div class='box'><strong>Drill conditions</strong><ul>{cond}</ul></div>"
+            f"<div class='box scroll' id='matrix'><table><thead><tr><th>test call</th>{head}</tr></thead>"
+            f"<tbody>{rows}</tbody></table></div><div class='box'><ul>{footer}</ul></div>{panels}"
+            f"<p class='muted'>{html.escape(SCOPE_NOTE)}</p></main></body></html>")

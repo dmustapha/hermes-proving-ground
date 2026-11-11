@@ -1,0 +1,29 @@
+# File: catalog/proving-ground.yaml
+# [VERIFIED] fields and allowed values: research/catalog-README.md "Entry schema" (name pattern, https repo, 40-hex sha,
+# tier community, category tools, requires_hermes SemVer floor, image on raw.githubusercontent pinned to the sha).
+name: proving-ground
+repo: https://github.com/dmustapha/hermes-proving-ground
+sha: "{{PINNED_SHA}}"
+description: "A wiring test for your plugin stack: known, harmless test calls go through every installed plugin in a throwaway child Hermes home with the model never called, and each cell shows which plugin blocked, rewrote, changed the result, gated for approval, or passed it through."
+maintainer: dmustapha
+tier: community
+category: tools
+requires_hermes: ">=0.23.1"
+version: "0.1.0"
+title: "Proving Ground"
+image: "https://raw.githubusercontent.com/dmustapha/hermes-proving-ground/{{PINNED_SHA}}/docs/banner.png"
+screenshots:
+  - "https://raw.githubusercontent.com/dmustapha/hermes-proving-ground/{{PINNED_SHA}}/docs/matrix.png"
+  - "https://raw.githubusercontent.com/dmustapha/hermes-proving-ground/{{PINNED_SHA}}/docs/cell-detail.png"
+readme: true
+platforms: [macos]
+known_issues:
+  - "Spawns child hermes processes with throwaway homes under the temp dir; the first run prepares Hermes's runtime once (about 1 minute, ~650 MB downloaded by Hermes's own installer)."
+  - "Subject plugins run with your own file permissions; a call that leaves the temp dir is detected after it ran, not prevented."
+  - "A session-level /yolo toggle has no public API, so only HERMES_YOLO_MODE and approvals.mode: off are detected."
+  - "Other plugins' own network code cannot be blocked by a plugin; it would only see synthetic test data."
+capabilities:
+  provides_tools: []
+  provides_hooks: [pre_tool_call, post_tool_call, transform_tool_result, transform_terminal_output, pre_approval_request, post_approval_response]
+  provides_middleware: [llm_execution]
+  requires_env: []

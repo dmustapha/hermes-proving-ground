@@ -1,0 +1,7 @@
+# File: fixtures/fx_rewriter/plugin.yaml
+name: fx_rewriter
+version: "0.1.0"
+description: "PROVING GROUND demo fixture: rewrites PG_REWRITE_CANDIDATE into PG_GUARD_MARKER with a pre_tool_call modify."
+author: dmustapha
+requires_hermes: ">=0.23.0"
+provides_hooks: [pre_tool_call]

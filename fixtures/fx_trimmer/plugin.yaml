@@ -1,0 +1,7 @@
+# File: fixtures/fx_trimmer/plugin.yaml
+name: fx_trimmer
+version: "0.1.0"
+description: "PROVING GROUND demo fixture: an output trimmer that drops terminal lines containing FAILED."
+author: dmustapha
+requires_hermes: ">=0.23.0"
+provides_hooks: [transform_terminal_output]
