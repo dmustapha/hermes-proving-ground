@@ -1,0 +1,24 @@
+# File: examples/author-calls.yaml
+# A test-call file for `hermes provingground --calls author-calls.yaml --check` (schema: proving_ground/testcalls.py).
+# Copy it next to your plugin and edit it. Column names are `baseline`, `stack` (only with two or more plugins) and
+# `solo:<plugin directory name>`. Outcome tokens: BLOCKED, REWROTE, RESULT_CHANGED, APPROVAL_GATED, PASSED_THROUGH.
+# User call ids start with U. A terminal command must pass the closed grammar: single-space separated words,
+# `echo`, `printf` or `seq` with no flags (see `hermes provingground --help`). PROVING GROUND's own CI runs this
+# exact file with the demo guard fx_guard as the author's plugin.
+schema: provingground.testcalls.v1
+calls:
+  - id: U01
+    tool: terminal
+    subject: my guard's trigger
+    purpose: "Prints the marker my guard blocks. Shows my guard still blocks its own trigger shape."
+    args: {command: "echo PG_GUARD_MARKER {CALL_ID}"}
+    expect: {baseline: PASSED_THROUGH, "solo:fx_guard": BLOCKED}
+  - id: U02
+    tool: terminal
+    subject: harmless neighbour
+    purpose: "Prints a plain word. Shows my guard lets an unrelated command through."
+    args: {command: "echo hello {CALL_ID}"}
+    expect: {"solo:fx_guard": PASSED_THROUGH}
+expect:
+  TC01: {"solo:fx_guard": PASSED_THROUGH}
+  TC02: {"solo:fx_guard": BLOCKED}
