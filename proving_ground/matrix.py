@@ -82,6 +82,7 @@ class ColumnRun:
     connects: tuple[tuple[str, bool], ...] = ()
     load_failed: tuple[str, ...] = ()
     scripted_steps: int = 0
+    stray_escapes: tuple[tuple[str, ...], ...] = ()  # escapes whose tool_call_id matched no drill call
 
 
 @dataclass(frozen=True)
@@ -189,22 +190,31 @@ def normalize_result(result: Any, sandbox: str, recorder_url: str) -> str | None
 # File: proving_ground/matrix.py  (part 2 of 3: events -> observations -> cells)
 
 
-def _slots(plan_calls: Sequence[Mapping[str, Any]], events: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Attach each event to a call: by tool_call_id when it matches a plan ref, else by call order (sequential drill)."""
+CALL_EVENTS = ("pre_tool_call", "terminal_raw", "tool_raw", "post_tool_call", "escaped")
+
+
+def _slots(plan_calls: Sequence[Mapping[str, Any]], events: Sequence[Mapping[str, Any]]
+           ) -> tuple[dict[str, dict[str, Any]], list[Mapping[str, Any]]]:
+    """Attach each call event to its drill call by tool_call_id only; return the events that match none (stray).
+    Never by call order: a plugin that adds or drops a call would shift every later call (perspective point 4)."""
     ref_to_id = {str(c["call_ref"]): str(c["id"]) for c in plan_calls}
-    order = [str(c["id"]) for c in plan_calls]
-    slots: dict[str, dict[str, Any]] = {cid: {} for cid in order}
-    current: str | None = None
+    slots: dict[str, dict[str, Any]] = {str(c["id"]): {} for c in plan_calls}
+    stray: list[Mapping[str, Any]] = []
     for event in events:
-        kind = event.get("ev")
-        by_ref = ref_to_id.get(str(event.get("tool_call_id")))
-        if kind == "pre_tool_call":
-            opened = len([s for s in slots.values() if "pre_tool_call" in s])
-            current = by_ref or (order[opened] if opened < len(order) else None)
-        target = by_ref or current
-        if target is not None and kind in ("pre_tool_call", "terminal_raw", "tool_raw", "post_tool_call", "escaped"):
-            slots[target].setdefault(kind, event)
-    return slots
+        if event.get("ev") not in CALL_EVENTS:
+            continue
+        target = ref_to_id.get(str(event.get("tool_call_id")))
+        if target is None:
+            stray.append(event)
+        else:
+            slots[target].setdefault(str(event["ev"]), event)
+    return slots, stray
+
+
+def mismatch_reason(stray: Sequence[Mapping[str, Any]]) -> str:
+    ids = sorted({str(e.get("tool_call_id")) for e in stray})
+    return (f"TOOL_CALL_ID_MISMATCH: {len(stray)} tool events carry an id that matches no drill call "
+            f"({', '.join(ids[:3])}{' …' if len(ids) > 3 else ''}); not matched by order")
 
 
 def _observation(call: Mapping[str, Any], slot: Mapping[str, Any], sandbox: str, url: str,
@@ -234,13 +244,16 @@ def unconfirmed_plugins(plugins: Sequence[str], events: Sequence[Mapping[str, An
 def column_from_events(name: str, plugins: tuple[str, ...], plan_calls: Sequence[Mapping[str, Any]],
                        events: Sequence[Mapping[str, Any]], sandbox: str, recorder_url: str,
                        recorded: Sequence[str], abort_reason: str | None, wall_s: float) -> ColumnRun:
-    slots = _slots(plan_calls, events)
+    slots, stray = _slots(plan_calls, events)
+    if stray and abort_reason is None:
+        abort_reason = mismatch_reason(stray)
+    stray_escapes = tuple(tuple(str(r) for r in e.get("reasons") or ()) for e in stray if e.get("ev") == "escaped")
     observations = {str(c["id"]): _observation(c, slots[str(c["id"])], sandbox, recorder_url, recorded)
                     for c in plan_calls}
     connects = tuple((str(e.get("address")), bool(e.get("loopback"))) for e in events if e.get("ev") == "connect")
     steps = sum(1 for e in events if e.get("ev") == "llm_execution")
     return ColumnRun(name, plugins, observations, abort_reason, wall_s, connects,
-                     unconfirmed_plugins(plugins, events), steps)
+                     unconfirmed_plugins(plugins, events), steps, stray_escapes)
 
 
 def _text(obs: CallObservation) -> str:
@@ -397,9 +410,12 @@ def _unseen(stack: Mapping[str, Cell], cross: Mapping[str, Mapping[str, Cell]],
 
 
 def _escapes(columns: Sequence[ColumnRun]) -> list[Finding]:
-    return [Finding("ESCAPED", cid, col.plugins, f"In column {col.name}, {cid} left the sandbox "
-                    f"({', '.join(obs.escaped_reasons)}); the drill stopped that column.")
-            for col in columns for cid, obs in col.observations.items() if obs.escaped_reasons]
+    found = [Finding("ESCAPED", cid, col.plugins, f"In column {col.name}, {cid} left the sandbox "
+                     f"({', '.join(obs.escaped_reasons)}); the drill stopped that column.")
+             for col in columns for cid, obs in col.observations.items() if obs.escaped_reasons]
+    return found + [Finding("ESCAPED", "unknown call", col.plugins, f"In column {col.name}, a tool call with an id "
+                            f"that matches no drill call left the sandbox ({', '.join(reasons)}); the drill stopped "
+                            "that column.") for col in columns for reasons in col.stray_escapes]
 
 
 def _load_failed_cell(cell: Cell, col: ColumnRun) -> Cell:

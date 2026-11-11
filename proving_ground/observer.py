@@ -4,7 +4,8 @@
 # transform_tool_result(tool_name, args, result, <call ids>, duration_ms, status, error_type, error_message) model_tools.py:880-883;
 # post_tool_call(tool_name, args, result, <call ids>, duration_ms, status, error_type, error_message) model_tools.py:715-718.
 # None-returning transform hooks observe raw values: P3. post_tool_call args are final effective args: P2/P7.
-# [ASSUMED] the injected tool_call id reaches hooks as tool_call_id; matrix.py falls back to call order when it does not.
+# [VERIFIED debug P2 kept-logs drill] the injected tool_call id reaches every call hook as tool_call_id; matrix.py treats
+# an event whose id matches no drill call as TOOL_CALL_ID_MISMATCH (never matched by order).
 """Observer hooks for the drill child. Records; never changes a result."""
 from __future__ import annotations
 
