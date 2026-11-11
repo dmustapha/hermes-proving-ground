@@ -19,20 +19,27 @@ def parse(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-@pytest.mark.parametrize("argv, expected", [(["--fixtures"], "demo"), (["--fixtures", "demo"], "demo"),
-                                            (["--fixtures", "extended"], "extended"), ([], None),
+@pytest.mark.parametrize("argv, expected", [(["--fixtures"], "demo"), (["--extended"], "extended"),
+                                            (["--fixtures", "--extended"], "extended"),
+                                            (["--extended", "--fixtures"], "extended"), ([], None),
                                             (["--fixtures", "--html", "x.html"], "demo"),
                                             (["show", "TC04", "--fixtures"], "demo")])
-def test_fixtures_flag_parses_bare_and_with_a_stack_name(argv, expected) -> None:
-    assert parse(argv).fixtures == expected
+def test_fixtures_flag_picks_the_demo_or_extended_stack(argv, expected) -> None:
+    assert cli.fixture_stack(parse(argv)) == expected
+
+
+def test_fixtures_never_swallows_the_action_that_follows_it() -> None:
+    args = parse(["--fixtures", "show", "TC04", "--column", "stack"])
+    assert (args.action, args.call, args.column, cli.fixture_stack(args)) == ("show", "TC04", "stack", "demo")
+    assert parse(["--fixtures", "lock", "stack.lock.yaml"]).call == "stack.lock.yaml"
 
 
 def test_demo_usage_with_an_export_still_parses() -> None:
     args = parse(["--fixtures", "--html", "x.html"])
-    assert (args.action, args.fixtures, args.html_out) == ("run", "demo", "x.html")
+    assert (args.action, cli.fixture_stack(args), args.html_out) == ("run", "demo", "x.html")
 
 
-def test_unknown_stack_name_is_an_argparse_error() -> None:
+def test_an_unknown_word_after_fixtures_is_an_argparse_error() -> None:
     with pytest.raises(SystemExit):
         parse(["--fixtures", "everything"])
 

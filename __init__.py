@@ -55,6 +55,17 @@ def _handle_slash(raw_args: str = "", *, platform: str = "", session_id: str = "
     return _cli().handle_slash(raw_args, platform=platform, session_id=session_id, **kwargs)
 
 
+def _slash_handler(ctx: Any) -> Callable[..., str]:
+    """The slash handler, carrying this context's post_message (plugins_context.py:414) so a background drill can
+    post its summary into the chat when it finishes; None on a Hermes without it."""
+    post = getattr(ctx, "post_message", None)
+
+    def handler(raw_args: str = "", *, platform: str = "", session_id: str = "", **kwargs: Any) -> str:
+        return _handle_slash(raw_args, platform=platform, session_id=session_id, post=post, **kwargs)
+
+    return handler
+
+
 def _register_surfaces(ctx: Any) -> None:
     ctx.register_cli_command(
         name="provingground",
@@ -65,7 +76,7 @@ def _register_surfaces(ctx: Any) -> None:
     )
     ctx.register_command(
         "provingground",
-        handler=_handle_slash,
+        handler=_slash_handler(ctx),
         description="Wiring test of your plugin stack (throwaway child home, model not called)",
         args_hint="[fixtures] [show <cell>]",
     )

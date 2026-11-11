@@ -128,8 +128,8 @@ def test_fixtures_extended_through_the_cli_reports_both_cross_plugin_findings(mo
     parser = argparse.ArgumentParser()
     cli.setup_parser(parser)
     out = tmp_path / "extended.json"
-    args = parser.parse_args(["--fixtures", "extended", "--quiet", "--no-color", "--json", str(out)])
-    assert args.fixtures == "extended"
+    args = parser.parse_args(["--fixtures", "--extended", "--quiet", "--no-color", "--json", str(out)])
+    assert cli.fixture_stack(args) == "extended"
     assert cli.handle_cli(args) == 0, capsys.readouterr().out
     exported = json.loads(out.read_text(encoding="utf-8"))
     assert [f["kind"] for f in exported["findings"]] == ["REWRITE_UNSEEN_BY", "MASKED_IN_STACK"]

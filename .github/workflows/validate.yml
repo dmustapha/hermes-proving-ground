@@ -115,7 +115,7 @@ jobs:
         run: test -z "${TMPDIR:-}"
       - run: hermes provingground warm
       - name: the warm cache is under /tmp, not Hermes's scratch dir
-        run: hermes provingground warm --check | tee "$RUNNER_TEMP/warm-check.txt" && grep -q "(temp dir /tmp)" "$RUNNER_TEMP/warm-check.txt"
+        run: hermes provingground warm --status | tee "$RUNNER_TEMP/warm-check.txt" && grep -q "(temp dir /tmp)" "$RUNNER_TEMP/warm-check.txt"
       - name: fixture drill
         run: hermes provingground --fixtures --no-color --json "$RUNNER_TEMP/fixture-report.json"
       - name: the saved report is the golden matrix with nothing left behind
