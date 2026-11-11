@@ -84,3 +84,27 @@ def test_slash_show_without_a_report_says_how_to_make_one(monkeypatch) -> None:
 
     monkeypatch.setattr(cli, "load_latest", none_yet)
     assert cli.handle_slash("show").startswith("NO_REPORT")
+
+
+def test_slash_show_during_the_first_drill_says_it_is_running(monkeypatch) -> None:
+    def none_yet():
+        from proving_ground import safety
+        raise safety.Refusal("NO_REPORT", "no report yet")
+
+    monkeypatch.setattr(cli, "load_latest", none_yet)
+    assert cli._SLASH_LOCK.acquire(blocking=False)
+    try:
+        assert cli.handle_slash("show") == cli.DRILL_RUNNING
+    finally:
+        cli._SLASH_LOCK.release()
+
+
+def test_slash_show_during_a_later_drill_labels_the_report_as_the_previous_one(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "load_latest", fixture_like_matrix)
+    assert cli._SLASH_LOCK.acquire(blocking=False)
+    try:
+        text = cli.handle_slash("show")
+    finally:
+        cli._SLASH_LOCK.release()
+    assert text.startswith("A drill is running in the background; the report below is the previous one")
+    assert "cells with a recorded effect" in text

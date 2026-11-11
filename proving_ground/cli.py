@@ -547,11 +547,16 @@ def _start_slash_drill(args: argparse.Namespace, platform: str | None) -> None:
         raise
 
 
+DRILL_RUNNING = "A drill is running in the background; its report is not saved yet. Try `/provingground show` again in about 30 s."
+
+
 def _slash_show(args: argparse.Namespace) -> str:
-    failure = last_drill_failure()
+    failure, running = last_drill_failure(), _SLASH_LOCK.locked()
     try:
         m = load_latest()
     except safety.Refusal as refusal:
+        if running and refusal.code == "NO_REPORT":
+            return DRILL_RUNNING
         return "\n".join(filter(None, [failure, f"{refusal.code}: {refusal.message}"]))
     if args.call is None:
         body = notable_text(m)
@@ -562,6 +567,8 @@ def _slash_show(args: argparse.Namespace) -> str:
         body = report.render_cell_detail(m, column, args.call)
     if failure:
         return f"{failure}\nthe report below is from the previous successful drill ({m.conditions.started_at}):\n{body}"
+    if running:
+        return f"A drill is running in the background; the report below is the previous one ({m.conditions.started_at}).\n{body}"
     return body
 
 
