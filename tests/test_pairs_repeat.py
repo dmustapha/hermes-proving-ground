@@ -180,6 +180,23 @@ def test_only_solo_columns_with_a_plugin_effect_are_repeated(monkeypatch) -> Non
     assert [s.name for s in seen] == ["solo:fx_guard", "solo:fx_guard"] and list(repeats) == ["solo:fx_guard"]
 
 
+def test_an_effect_seen_only_in_the_stack_repeats_every_solo_column() -> None:
+    """A stateful plugin quiet in its one solo run looks exactly like an interaction, so every solo runs again."""
+    m = matrix.build_matrix(stack_cols(), None, {}, infos(), "v", "t", 1.0, load_order=list(TRIO))
+    assert matrix.effect_columns(m) == []
+    assert matrix.repeat_columns(m) == ["solo:fx_a", "solo:fx_b", "solo:fx_c"]
+    assert matrix.repeat_columns(guard_matrix([])) == ["solo:fx_guard"]
+
+
+def test_an_interaction_whose_solo_runs_disagree_says_it_can_change() -> None:
+    cols = stack_cols()
+    runs = {"solo:fx_a": [column("solo:fx_a", ("fx_a",), CHANGED)]}
+    m = matrix.build_matrix(cols, None, {}, infos(), "v", "t", 1.0, load_order=list(TRIO), repeats=runs)
+    assert m.cell("solo:fx_a", "TC01").varied == ("PASSED THROUGH", "RESULT CHANGED")
+    [attribution] = [a for a in m.attributions if a.call_id == "TC01"]
+    assert attribution.kind == "interaction" and "repeated solo runs of fx_a disagree on TC01" in attribution.note
+
+
 def test_core_only_solo_columns_are_not_repeated() -> None:
     m = fixture_like_matrix()
     assert set(matrix.effect_columns(m)) == {"solo:fx_guard", "solo:fx_rewriter", "solo:fx_trimmer"}

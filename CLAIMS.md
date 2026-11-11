@@ -64,3 +64,4 @@
 | CL-55 | `--repeat N` runs each solo column with a plugin effect N times (1-5), and a cell whose runs disagree is marked UNSTABLE. | test | tests/test_options_e2e.py::test_repeat_marks_a_stateful_plugins_disagreeing_solo_runs_unstable |
 | CL-56 | `warm --from DIR` copies the runtime from an existing Hermes installs dir, leaves the source unchanged, and checks the copy starts before the cache is used. | test | tests/test_seed.py::test_real_installs_seed_a_cache_that_starts_without_the_network |
 | CL-57 | A copied runtime that does not start is removed, and the cache stays cold. | test | tests/test_seed.py::test_a_copy_that_does_not_start_is_removed_and_the_cache_stays_cold |
+| CL-58 | When an effect appears only in the full stack, `--repeat N` runs every solo column again, so a stateful plugin that was quiet in its one solo run can show up as UNSTABLE. | test | tests/test_pairs_repeat.py::test_an_effect_seen_only_in_the_stack_repeats_every_solo_column |

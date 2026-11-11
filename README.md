@@ -59,7 +59,7 @@ TC04 in the full stack: the tool printed a three-line test log with one FAILED l
 |---|---|
 | `--all-wires` | Two extra rows: LLM-CONTEXT (what the turn sends the model besides tool results) and LLM-REPLY (the final reply as delivered), marked CONTEXT ADDED or REPLY CHANGED against the baseline. |
 | `--pairs` | For an effect seen only in the full stack, runs pairs of plugins (at most 10, and the report says when it capped) and names the smallest set observed to reproduce it, or says it needs 3+ plugins. |
-| `--repeat N` | Runs each solo column with a plugin effect N times (1-5); a cell whose runs disagree is marked UNSTABLE. |
+| `--repeat N` | Runs each solo column with a plugin effect N times (1-5), and every solo column when an effect appears only in the full stack; a cell whose runs disagree is marked UNSTABLE. |
 | `warm --from DIR` | Copies the runtime from an existing Hermes installs dir, such as `~/.hermes/installs`, instead of downloading it. The source is only read, and the copy is checked to start before it is used. |
 
 ## How attribution works

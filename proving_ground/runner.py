@@ -973,8 +973,8 @@ def _run_pairs(view: matrix.Matrix, subjects: Sequence[PluginSource], work: Call
 
 def _run_repeats(view: matrix.Matrix, columns: Sequence[ColumnSpec], work: Callable[[ColumnSpec], CellRun],
                  settings: RunnerSettings) -> dict[str, list[matrix.ColumnRun]]:
-    """--repeat N: the solo columns with a plugin effect run N - 1 more times each; quiet solos are not repeated."""
-    wanted = set(matrix.effect_columns(view))
+    """--repeat N: the solo columns matrix.repeat_columns picks run N - 1 more times each."""
+    wanted = set(matrix.repeat_columns(view))
     specs = [spec for spec in columns if spec.name in wanted for _ in range(settings.repeat - 1)]
     repeats: dict[str, list[matrix.ColumnRun]] = {name: [] for name in sorted(wanted)}
     for run in _parallel(specs, work, settings.jobs):

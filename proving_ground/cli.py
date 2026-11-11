@@ -156,7 +156,9 @@ def repeat_note(drill: runner.DrillRun, m: matrix.Matrix) -> str:
     unstable = sum(1 for cell in m.cells.values() if cell.varied)
     names = ", ".join(n.removeprefix("solo:") for n in drill.repeats)
     disagree = f"{unstable} cell disagrees" if unstable == 1 else f"{unstable} cells disagree"
-    return (f"{drill.repeat} solo runs each of {names} (the solo columns with a plugin effect); "
+    why = ("every solo column, since an effect appears only in the full stack"
+           if any(a.kind == "interaction" for a in m.attributions) else "the solo columns with a plugin effect")
+    return (f"{drill.repeat} solo runs each of {names} ({why}); "
             f"{disagree} between runs (UNSTABLE)"
             + (f"; {stopped} repeat runs stopped and were not compared" if stopped else ""))
 
@@ -535,8 +537,9 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
                            help="for an effect seen only in the full stack, run pairs of plugins to name the smallest "
                                 f"set that reproduces it (at most {matrix.PAIR_CAP} pair columns)")
     subparser.add_argument("--repeat", type=int, default=1, metavar="N",
-                           help=f"run each solo column with a plugin effect N times in all (1-{REPEAT_MAX}); runs "
-                                "that disagree mark the cell UNSTABLE")
+                           help=f"run each solo column with a plugin effect N times in all (1-{REPEAT_MAX}), every solo "
+                                "column when an effect appears only in the full stack; runs that disagree mark the "
+                                "cell UNSTABLE")
     subparser.add_argument("--from", dest="warm_from", default=None, metavar="DIR",
                            help="warm: copy the runtime from an existing Hermes installs dir (e.g. ~/.hermes/installs, "
                                 "only read) instead of downloading it")

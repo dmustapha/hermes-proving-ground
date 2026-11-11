@@ -718,9 +718,18 @@ def _with_repeat_count(a: Attribution, grid: Mapping[str, Mapping[str, Cell]],
 
 def effect_columns(m: Matrix) -> list[str]:
     """Solo columns with a plugin effect: a cell other than a quiet one (PASSED THROUGH, LOAD FAILED, NOT RUN, N/A)
-    or a core effect. These are the ones --repeat runs again."""
+    or a core effect."""
     return [name for name in m.columns if name.startswith("solo:")
             and any(c.primary not in QUIET and not c.core for (col, _cid), c in m.cells.items() if col == name)]
+
+
+def repeat_columns(m: Matrix) -> list[str]:
+    """What --repeat runs again: the solo columns with a plugin effect, and every confirmed solo column when an effect
+    appears only in the full stack, since a stateful plugin that was quiet in its one solo run looks exactly like
+    an interaction."""
+    if not any(a.kind == "interaction" for a in m.attributions):
+        return effect_columns(m)
+    return [name for name in m.columns if name.startswith("solo:") and name not in m.load_failed]
 
 
 def provisional(columns: Sequence[ColumnRun], baseline_repeat: ColumnRun | None,
