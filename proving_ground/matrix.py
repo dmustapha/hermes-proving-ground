@@ -27,6 +27,8 @@ class Outcome(str, Enum):
     APPROVAL_GATED = "APPROVAL_GATED"
     REWROTE = "REWROTE"
     RESULT_CHANGED = "RESULT_CHANGED"
+    CONTEXT_ADDED = "CONTEXT_ADDED"  # --all-wires only: the model's view of the turn differs from the baseline's
+    REPLY_CHANGED = "REPLY_CHANGED"  # --all-wires only: the delivered reply differs from the one the model produced
     PASSED_THROUGH = "PASSED_THROUGH"
     LOAD_FAILED = "LOAD_FAILED"
     NOT_RUN = "NOT_RUN"
@@ -37,7 +39,8 @@ PRECEDENCE: tuple[Outcome, ...] = tuple(Outcome)
 LABELS: dict[Outcome, str] = {
     Outcome.ESCAPED: "ESCAPED", Outcome.ERRORED: "ERRORED", Outcome.BLOCKED: "BLOCKED",
     Outcome.APPROVAL_GATED: "APPROVAL-GATED", Outcome.REWROTE: "REWROTE",
-    Outcome.RESULT_CHANGED: "RESULT CHANGED", Outcome.PASSED_THROUGH: "PASSED THROUGH",
+    Outcome.RESULT_CHANGED: "RESULT CHANGED", Outcome.CONTEXT_ADDED: "CONTEXT ADDED",
+    Outcome.REPLY_CHANGED: "REPLY CHANGED", Outcome.PASSED_THROUGH: "PASSED THROUGH",
     Outcome.LOAD_FAILED: "LOAD FAILED", Outcome.NOT_RUN: "NOT RUN", Outcome.NOT_APPLICABLE: "N/A",
 }
 QUIET = frozenset({Outcome.PASSED_THROUGH, Outcome.LOAD_FAILED, Outcome.NOT_RUN, Outcome.NOT_APPLICABLE})
@@ -159,6 +162,7 @@ class Matrix:
     aborted: Mapping[str, str] = field(default_factory=dict)
     load_failed: Mapping[str, Sequence[str]] = field(default_factory=dict)
     unreplayable: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    options: Mapping[str, str] = field(default_factory=dict)  # opt-in drill options (wires, pairs, repeat): name -> note
 
     def cell(self, column: str, call_id: str) -> Cell:
         return self.cells[(column, call_id)]
@@ -248,13 +252,17 @@ def unconfirmed_plugins(plugins: Sequence[str], events: Sequence[Mapping[str, An
 
 def column_from_events(name: str, plugins: tuple[str, ...], plan_calls: Sequence[Mapping[str, Any]],
                        events: Sequence[Mapping[str, Any]], sandbox: str, recorder_url: str,
-                       recorded: Sequence[str], abort_reason: str | None, wall_s: float) -> ColumnRun:
+                       recorded: Sequence[str], abort_reason: str | None, wall_s: float,
+                       wires: Mapping[str, Any] | None = None) -> ColumnRun:
+    """*wires* is the plan's context-and-reply spec (--all-wires); without it the column has only its test calls."""
     slots, stray = _slots(plan_calls, events)
     if stray and abort_reason is None:
         abort_reason = mismatch_reason(stray)
     stray_escapes = tuple(tuple(str(r) for r in e.get("reasons") or ()) for e in stray if e.get("ev") == "escaped")
     observations = {str(c["id"]): _observation(c, slots[str(c["id"])], sandbox, recorder_url, recorded)
                     for c in plan_calls}
+    if wires:
+        observations.update(wire_observations(wires, events, sandbox, recorder_url))
     connects = tuple((str(e.get("address")), bool(e.get("loopback"))) for e in events if e.get("ev") == "connect")
     steps = sum(1 for e in events if e.get("ev") == "llm_execution")
     activated = next((e for e in events if e.get("ev") == "activated"), {})
@@ -346,6 +354,129 @@ def classify(column: str, obs: CallObservation, base: CallObservation, unstable:
                     note=CORE_NOTE)
     return Cell(column, obs.call_id, tuple(outcomes) or (Outcome.PASSED_THROUGH,), hop=hop, unstable=unstable,
                 core_also=core_base)
+
+
+# Context and reply wire (--all-wires). Two extra rows per drill, built from the child's llm_context, reply_raw and
+# reply_delivered events (observer.make_wire_hooks, injector.context_view) and judged with the same rules as a call:
+# a column against the zero-plugin baseline, an effect the baseline shows too labelled (core).
+WIRE_TOOL = "llm"
+CONTEXT_ID, REPLY_ID = "LLM-CONTEXT", "LLM-REPLY"
+WIRE_CALLS: tuple[CallInfo, ...] = (
+    CallInfo(CONTEXT_ID, WIRE_TOOL, "context sent to the model",
+             "every message the scripted turn sends the model besides tool results (system prompt, user turn), and "
+             "the tools offered; plugins add here with pre_llm_call"),
+    CallInfo(REPLY_ID, WIRE_TOOL, "final reply delivered",
+             "the scripted final reply as the model produced it, against the reply the turn delivered; plugins "
+             "rewrite it with transform_llm_output"))
+WIRE_CORE_NOTE = "Hermes core changed this without any plugin (the zero-plugin baseline shows it too)"
+_CONTEXT_PARTS = (("system prompt", "system"), ("user turn", "user"), ("assistant text", "assistant"))
+# The system prompt's date line (agent/system_prompt.py:517) changes at midnight, not with any plugin.
+_START_DATE = re.compile(r"^(Conversation started: ).*$", re.M)
+
+
+def _context_part(view: Mapping[str, Any], role: str) -> list[str]:
+    return [str(m.get("content")) for m in view.get("messages") or () if isinstance(m, Mapping) and m.get("role") == role]
+
+
+def _normalized_view(event: Mapping[str, Any], sandbox: str, url: str) -> dict[str, Any]:
+    messages = [{"role": str(m.get("role")),
+                 "content": _START_DATE.sub(r"\1{DATE}", normalize_text(str(m.get("content") or ""), sandbox, url))}
+                for m in event.get("messages") or () if isinstance(m, Mapping)]
+    return {"messages": messages, "tools": sorted(str(t) for t in event.get("tools") or ())}
+
+
+def wire_observations(wires: Mapping[str, Any], events: Sequence[Mapping[str, Any]], sandbox: str,
+                      url: str) -> dict[str, CallObservation]:
+    """The two wire rows of one column. The context row keeps each distinct view once, in step order."""
+    views: list[dict[str, Any]] = []
+    for event in (e for e in events if e.get("ev") == "llm_context"):
+        view = _normalized_view(event, sandbox, url)
+        if view not in views:
+            views.append(view)
+    raw = next((e for e in events if e.get("ev") == "reply_raw"), None)
+    out = next((e for e in events if e.get("ev") == "reply_delivered"), None)
+    prompt, reply = {"prompt": str(wires.get("prompt"))}, {"reply": str(wires.get("reply"))}
+    text = lambda e: normalize_text(str(e.get("text") or ""), sandbox, url) if e else None  # noqa: E731
+    return {CONTEXT_ID: CallObservation(CONTEXT_ID, WIRE_TOOL, bool(views), prompt, prompt, None, None, None, None,
+                                        None, json.dumps(views, sort_keys=True, ensure_ascii=False) if views else None,
+                                        False),
+            REPLY_ID: CallObservation(REPLY_ID, WIRE_TOOL, out is not None, reply, reply, None, None, None, None,
+                                      text(raw), text(out), False)}
+
+
+def context_views(obs: CallObservation) -> list[Mapping[str, Any]]:
+    try:
+        views = json.loads(obs.delivered) if obs.delivered else []
+    except (json.JSONDecodeError, ValueError):
+        return []
+    return [v for v in views if isinstance(v, Mapping)] if isinstance(views, list) else []
+
+
+def context_hop(obs: CallObservation, base: CallObservation) -> str:
+    """Which parts of the model's view differ from the baseline's: system prompt, user turn, assistant text, tools."""
+    mine, theirs = context_views(obs), context_views(base)
+    parts = [label for label, role in _CONTEXT_PARTS
+             if [_context_part(v, role) for v in mine] != [_context_part(v, role) for v in theirs]]
+    if [v.get("tools") for v in mine] != [v.get("tools") for v in theirs]:
+        parts.append("tools offered")
+    return ", ".join(parts) or "message order"
+
+
+def _prompt_extended(obs: CallObservation) -> bool:
+    """The baseline's own test: does any step's user turn differ from the prompt PROVING GROUND sent?"""
+    prompt = str(obs.injected_args.get("prompt"))
+    return any(turn != prompt for view in context_views(obs) for turn in _context_part(view, "user"))
+
+
+def _reply_changed(obs: CallObservation) -> bool:
+    return obs.tool_raw is not None and obs.delivered != obs.tool_raw
+
+
+def _wire_changed_alone(obs: CallObservation) -> bool:
+    return _prompt_extended(obs) if obs.call_id == CONTEXT_ID else _reply_changed(obs)
+
+
+def _wire_outcome(call_id: str) -> Outcome:
+    return Outcome.CONTEXT_ADDED if call_id == CONTEXT_ID else Outcome.REPLY_CHANGED
+
+
+def classify_wire_baseline(obs: CallObservation) -> Cell:
+    if not obs.ran:
+        return Cell("baseline", obs.call_id, (Outcome.NOT_RUN,), note="the child recorded nothing on this wire")
+    if _wire_changed_alone(obs):
+        return Cell("baseline", obs.call_id, (_wire_outcome(obs.call_id),), hop="core", core=True, note=WIRE_CORE_NOTE)
+    return Cell("baseline", obs.call_id, (Outcome.PASSED_THROUGH,))
+
+
+def classify_wire(column: str, obs: CallObservation, base: CallObservation, unstable: bool) -> Cell:
+    """A column's wire cell: a difference from the baseline is the plugin effect (never when the baseline itself
+    differed between its two runs); a difference the baseline shows too is core."""
+    if not obs.ran:
+        return Cell(column, obs.call_id, (Outcome.NOT_RUN,), note="the child recorded nothing on this wire")
+    base_core = base.ran and _wire_changed_alone(base)
+    if obs.call_id == CONTEXT_ID:
+        differs, hop = obs.delivered != base.delivered, context_hop(obs, base)
+    else:
+        differs, hop = _reply_changed(obs) and obs.delivered != base.delivered, "transform_llm_output"
+    if differs and not unstable and base.ran:
+        return Cell(column, obs.call_id, (_wire_outcome(obs.call_id),), hop=hop, core_also=base_core)
+    if base_core:
+        return Cell(column, obs.call_id, (_wire_outcome(obs.call_id),), hop="core", core=True, unstable=unstable,
+                    note=WIRE_CORE_NOTE)
+    return Cell(column, obs.call_id, (Outcome.PASSED_THROUGH,), unstable=unstable)
+
+
+def baseline_cell(obs: CallObservation) -> Cell:
+    return classify_wire_baseline(obs) if obs.tool == WIRE_TOOL else classify_baseline(obs)
+
+
+def column_cell(column: str, obs: CallObservation, base: CallObservation, unstable: bool) -> Cell:
+    return (classify_wire if obs.tool == WIRE_TOOL else classify)(column, obs, base, unstable)
+
+
+def count_test_calls(calls: Sequence[CallInfo]) -> int:
+    """Test calls only: the two wire rows are not synthetic inputs."""
+    return sum(1 for c in calls if c.tool != WIRE_TOOL)
 
 
 # File: proving_ground/matrix.py  (part 3 of 3: attribution, findings, assembly)
@@ -458,8 +589,8 @@ def _load_failed_cell(cell: Cell, col: ColumnRun) -> Cell:
 
 
 def _column_cells(col: ColumnRun, base: ColumnRun, unstable: frozenset[str]) -> dict[str, Cell]:
-    cells = {cid: classify(col.name, obs, base.observations[cid], cid in unstable)
-             for cid, obs in col.observations.items()}
+    cells = {cid: column_cell(col.name, obs, base.observations[cid], cid in unstable)
+             for cid, obs in col.observations.items() if cid in base.observations}
     return {cid: _load_failed_cell(c, col) for cid, c in cells.items()} if col.load_failed else cells
 
 
@@ -497,11 +628,11 @@ def build_matrix(columns: Sequence[ColumnRun], baseline_repeat: ColumnRun | None
                  crosscheck: Mapping[str, ColumnRun], calls: Sequence[CallInfo], hermes_version: str,
                  started_at: str, wall_s: float, skipped: Sequence[tuple[str, str]] = (),
                  needs_env: Sequence[str] = (), *, load_order: Sequence[str] | None = None,
-                 unreplayable: Sequence[tuple[str, Sequence[str]]] = (), conditions_extra: Mapping[str, Any] | None = None
-                 ) -> Matrix:
+                 unreplayable: Sequence[tuple[str, Sequence[str]]] = (), conditions_extra: Mapping[str, Any] | None = None,
+                 options: Mapping[str, str] | None = None) -> Matrix:
     base, others = columns[0], list(columns[1:])
     unstable = unstable_calls(base, baseline_repeat)
-    grid: dict[str, dict[str, Cell]] = {"baseline": {cid: classify_baseline(o) for cid, o in base.observations.items()}}
+    grid: dict[str, dict[str, Cell]] = {"baseline": {cid: baseline_cell(o) for cid, o in base.observations.items()}}
     for col in others:
         grid[col.name] = _column_cells(col, base, unstable)
     for key in needs_env:
@@ -518,10 +649,10 @@ def build_matrix(columns: Sequence[ColumnRun], baseline_repeat: ColumnRun | None
     findings += _escapes(list(columns) + list(crosscheck.values()))
     connects = [c for col in list(columns) + list(crosscheck.values()) for c in col.connects]
     steps = sum(c.scripted_steps for c in list(columns) + list(crosscheck.values()))
-    extra = {"model": model_line(steps, len(calls)), "coverage": coverage_line(columns, needs_env, skipped),
+    extra = {"model": model_line(steps, count_test_calls(calls)), "coverage": coverage_line(columns, needs_env, skipped),
              "order_note": order_note(list(columns) + list(crosscheck.values())),
              **dict(conditions_extra or {})}
-    conditions = DrillConditions(hermes_version, len(calls), len(solos), order, len(connects),
+    conditions = DrillConditions(hermes_version, count_test_calls(calls), len(solos), order, len(connects),
                                  sum(1 for _a, loop in connects if not loop), wall_s, started_at, **extra)
     cells = {(col, cid): cell for col, row in grid.items() for cid, cell in row.items()}
     aborted = {c.name: c.abort_reason for c in list(columns) + list(crosscheck.values())
@@ -529,7 +660,8 @@ def build_matrix(columns: Sequence[ColumnRun], baseline_repeat: ColumnRun | None
     observations = {c.name: c.observations for c in list(columns) + list(crosscheck.values())}
     return Matrix(conditions, tuple(calls), tuple(grid), cells, tuple(attributions), tuple(findings),
                   observations, unstable, tuple(skipped), tuple(needs_env), aborted,
-                  {k: tuple(v) for k, v in failed.items()}, tuple((i, tuple(r)) for i, r in unreplayable))
+                  {k: tuple(v) for k, v in failed.items()}, tuple((i, tuple(r)) for i, r in unreplayable),
+                  dict(options or {}))
 
 
 def _plural(n: int, word: str) -> str:

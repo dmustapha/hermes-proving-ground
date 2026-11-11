@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from . import matrix, safety, testcalls
+from . import injector, matrix, safety, testcalls
 
 DEAD_PROVIDER_URL = "http://127.0.0.1:9/v1"
 DEAD_PROXY = "http://127.0.0.1:9"
@@ -79,6 +79,7 @@ class RunnerSettings:
     temp_base: Path
     cell_timeout_s: float = 120.0
     jobs: int = 3
+    wires: bool = False  # --all-wires: children also record the context and reply wire
 
 
 @dataclass
@@ -94,6 +95,7 @@ class CellRun:
     recorded: list[str] = field(default_factory=list)
     output_tail: str = ""
     copy_notes: tuple[str, ...] = ()
+    wires: Mapping[str, Any] | None = None  # the plan's context-and-reply spec when the drill ran with --all-wires
 
 
 class Recorder:
@@ -301,10 +303,17 @@ def build_child_home(root: Path, spec: ColumnSpec, settings: RunnerSettings,
     state = home / safety.STATE_DIRNAME
     state.mkdir(parents=True, exist_ok=True)
     (state / safety.TOKEN_FILENAME).write_text(token, encoding="utf-8")
-    plan = {"sandbox": str(root / "sandbox"), "subjects": [s.key for s in spec.plugins],
-            "calls": [c.as_plan() for c in calls]}
+    plan: dict[str, Any] = {"sandbox": str(root / "sandbox"), "subjects": [s.key for s in spec.plugins],
+                            "calls": [c.as_plan() for c in calls]}
+    if settings.wires:
+        plan["wires"] = wire_spec(settings)
     (state / safety.PLAN_FILENAME).write_text(json.dumps(plan), encoding="utf-8")
     return home
+
+
+def wire_spec(settings: RunnerSettings) -> dict[str, str] | None:
+    """What the scripted turn sends and replies, for the context and reply wire; None without --all-wires."""
+    return {"prompt": DRILL_PROMPT, "reply": injector.DONE_SENTINEL} if settings.wires else None
 
 
 def seed_sandbox(sandbox: Path, calls: Sequence[testcalls.DrillCall]) -> None:
@@ -595,13 +604,14 @@ def run_column(spec: ColumnSpec, templates: Sequence[testcalls.CallTemplate], ca
         reason = abort_reason_from(events, watch_reason, exit_code, expect_done=bool(calls))
         return CellRun(spec, str(root / "sandbox"), column_url, [c.as_plan() for c in calls], events,
                        exit_code, reason, time.monotonic() - started, recorder.for_column(column_token),
-                       _tail(root / "child.log"), tuple(dropped))
+                       _tail(root / "child.log"), tuple(dropped), wire_spec(settings))
     except (Cancelled, safety.Refusal):
         raise
     except Exception as exc:
         unrun = [{"id": t.id, "call_ref": testcalls.call_ref_for(t.id), "tool": t.tool, "args": {}} for t in templates]
         return CellRun(spec, str(root / "sandbox"), column_url, unrun, [], None, f"COLUMN_ERROR:{type(exc).__name__}",
-                       time.monotonic() - started, output_tail=str(exc)[:600], copy_notes=tuple(dropped))
+                       time.monotonic() - started, output_tail=str(exc)[:600], copy_notes=tuple(dropped),
+                       wires=wire_spec(settings))
     finally:
         _cleanup_root(root, spec, settings.temp_base)
 
@@ -858,7 +868,7 @@ def _parse_version(stdout: str) -> str:
 def _to_column(run: CellRun) -> matrix.ColumnRun:
     return matrix.column_from_events(run.spec.name, tuple(s.key for s in run.spec.plugins), run.plan_calls,
                                      run.events, run.sandbox, run.recorder_url, run.recorded,
-                                     run.abort_reason, run.wall_s)
+                                     run.abort_reason, run.wall_s, run.wires)
 
 
 def _parallel(specs: Sequence[ColumnSpec], work: Callable[[ColumnSpec], CellRun], jobs: int,

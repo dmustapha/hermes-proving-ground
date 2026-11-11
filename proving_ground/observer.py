@@ -6,6 +6,12 @@
 # None-returning transform hooks observe raw values; post_tool_call args are the final effective args (both observed
 # in probe runs). The injected tool_call id reaches every call hook as tool_call_id; matrix.py treats
 # an event whose id matches no drill call as TOOL_CALL_ID_MISMATCH (never matched by order).
+# Context and reply wire (--all-wires only): pre_llm_call(session_id, task_id, turn_id, user_message,
+# conversation_history, is_first_turn, model, platform, ...) agent/turn_context.py:919-931, whose {"context": ...}
+# returns are appended to the user message (turn_context.py:942-964, compose_user_api_content :126-137);
+# transform_llm_output(response_text, session_id, model, platform, turn_id) agent/turn_finalizer.py:535-543, where the
+# first non-empty string wins, so a None-returning tap sees the reply as the model produced it;
+# post_llm_call(..., assistant_response=final_response) turn_finalizer.py:494-505 carries the reply after the transform.
 """Observer hooks for the drill child. Records; never changes a result."""
 from __future__ import annotations
 
@@ -108,6 +114,35 @@ def make_hooks(state_dir: Path, sandbox: Path, log: EventLog) -> dict[str, Calla
             "transform_terminal_output": transform_terminal_output,
             "pre_approval_request": approval_observer("pre_approval_request"),
             "post_approval_response": approval_observer("post_approval_response")}
+
+
+WIRE_HOOK_NAMES: tuple[str, ...] = ("pre_llm_call", "transform_llm_output", "post_llm_call")
+WIRE_TEXT_CAP = 32 * 1024  # each recorded context or reply text is clipped to this many characters
+
+
+def clip_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else str(value)
+    return text if len(text) <= WIRE_TEXT_CAP else text[:WIRE_TEXT_CAP] + f" …[{len(text) - WIRE_TEXT_CAP} more chars]"
+
+
+def make_wire_hooks(log: EventLog) -> dict[str, Callable[..., None]]:
+    """Taps for the context and reply wire. Each returns None, so none of them adds context or rewrites a reply."""
+    def pre_llm_call(user_message: Any = None, is_first_turn: Any = None, **_: Any) -> None:
+        log.write("pre_llm_call", user_message=clip_text(user_message), is_first_turn=is_first_turn)
+        return None
+
+    def transform_llm_output(response_text: Any = None, **_: Any) -> None:
+        log.write("reply_raw", text=clip_text(response_text))
+        return None
+
+    def post_llm_call(assistant_response: Any = None, **_: Any) -> None:
+        log.write("reply_delivered", text=clip_text(assistant_response))
+        return None
+
+    return {"pre_llm_call": pre_llm_call, "transform_llm_output": transform_llm_output,
+            "post_llm_call": post_llm_call}
 
 
 def _connect_target(args: tuple[Any, ...]) -> tuple[str, bool]:

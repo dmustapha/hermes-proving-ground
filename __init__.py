@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 from .proving_ground import safety
 
-HOOK_NAMES: tuple[str, ...] = (
+CALL_HOOK_NAMES: tuple[str, ...] = (
     "pre_tool_call",
     "post_tool_call",
     "transform_tool_result",
@@ -22,6 +22,9 @@ HOOK_NAMES: tuple[str, ...] = (
     "pre_approval_request",
     "post_approval_response",
 )
+# The context and reply wire, recorded only in a drill child run with --all-wires (observer.WIRE_HOOK_NAMES).
+WIRE_HOOK_NAMES: tuple[str, ...] = ("pre_llm_call", "transform_llm_output", "post_llm_call")
+HOOK_NAMES: tuple[str, ...] = CALL_HOOK_NAMES + WIRE_HOOK_NAMES
 
 
 def _inert_hook(name: str) -> Callable[..., None]:
@@ -75,8 +78,11 @@ def _register_drill_child(ctx: Any) -> None:
     plan = observer.load_plan(state_dir)
     log = observer.EventLog(state_dir / safety.EVENTS_FILENAME)
     hooks = observer.make_hooks(state_dir, Path(plan["sandbox"]), log)
-    for name in HOOK_NAMES:
+    for name in CALL_HOOK_NAMES:
         ctx.register_hook(name, hooks[name])
+    if plan.get("wires"):  # a default drill registers no wire hook at all, so its children are unchanged
+        for name, tap in observer.make_wire_hooks(log).items():
+            ctx.register_hook(name, tap)
     probe = getattr(ctx, "has_plugin", None)  # public PluginContext.has_plugin (plugins_context.py:57-63)
     ctx.register_middleware("llm_execution", injector.make_llm_execution(state_dir, log, probe, _load_order_probe(ctx)))
     observer.install_socket_audit(log)

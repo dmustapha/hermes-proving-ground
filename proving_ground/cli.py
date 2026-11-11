@@ -45,7 +45,8 @@ def build_settings(args: argparse.Namespace) -> runner.RunnerSettings:
         raise safety.Refusal("SANDBOX_UNSUPPORTED", f"temp dir {temp_base} is not under a system temp base.")
     return runner.RunnerSettings(hermes_bin=find_hermes(getattr(args, "hermes_bin", None)), pg_source=PG_SOURCE,
                                  warm_cache=temp_base / "provingground-cache" / "installs", temp_base=temp_base,
-                                 cell_timeout_s=float(getattr(args, "timeout", 120.0)), jobs=int(getattr(args, "jobs", 3)))
+                                 cell_timeout_s=float(getattr(args, "timeout", 120.0)), jobs=int(getattr(args, "jobs", 3)),
+                                 wires=bool(getattr(args, "all_wires", False)))
 
 
 def user_config() -> dict[str, Any]:
@@ -131,15 +132,28 @@ def credentials_line(notes: Sequence[str]) -> str:
     return base + f"; withheld from the copies: {'; '.join(notes[:4])}" + (" …" if len(notes) > 4 else "")
 
 
+WIRES_NOTE = ("context and reply recorded in every column (pre_llm_call, transform_llm_output and post_llm_call "
+              "taps that return nothing); two extra rows, not counted as test calls")
+
+
+def drill_options(settings: runner.RunnerSettings) -> dict[str, str]:
+    """The opt-in options this drill ran with, as report lines; empty for a default drill."""
+    return {"wires": WIRES_NOTE} if settings.wires else {}
+
+
+def all_infos(templates: Sequence[testcalls.CallTemplate], settings: runner.RunnerSettings) -> list[matrix.CallInfo]:
+    return call_infos(templates) + (list(matrix.WIRE_CALLS) if settings.wires else [])
+
+
 def assemble(drill: runner.DrillRun, infos: Sequence[matrix.CallInfo], version: str, started: str,
-             leftover: tuple[int, int] | None = None) -> matrix.Matrix:
+             leftover: tuple[int, int] | None = None, options: dict[str, str] | None = None) -> matrix.Matrix:
     extra: dict[str, Any] = {"credentials": credentials_line(drill.copy_notes),
                              "approvals": runner.approvals_summary()}
     if leftover is not None:
         extra.update(leftover_processes=leftover[0], leftover_roots=leftover[1])
     return matrix.build_matrix(drill.columns, drill.baseline_repeat, drill.crosscheck, infos, version, started,
                                drill.wall_s, drill.skipped, drill.needs_env, load_order=drill.load_order,
-                               unreplayable=drill.unreplayable, conditions_extra=extra)
+                               unreplayable=drill.unreplayable, conditions_extra=extra, options=options)
 
 
 def planned_columns(subjects: Sequence[runner.PluginSource]) -> tuple[str, ...]:
@@ -156,7 +170,7 @@ def run_matrix(args: argparse.Namespace, on_partial: Callable[[report.LiveFrame]
     subjects, skipped = select_subjects(args, settings)
     templates = select_templates(args)
     ensure_warm(settings)
-    infos, planned, done = call_infos(templates), planned_columns(subjects), []
+    infos, planned, done = all_infos(templates, settings), planned_columns(subjects), []
     if on_partial is not None:
         on_partial(report.LiveFrame(tuple(infos), planned))
     version, started = runner.hermes_version(settings.hermes_bin, settings), now_iso()
@@ -168,7 +182,8 @@ def run_matrix(args: argparse.Namespace, on_partial: Callable[[report.LiveFrame]
 
     drill = runner.run_drill(subjects, templates, settings, partial, skipped)
     runner.reap_orphans(settings.temp_base)
-    return assemble(drill, infos, version, started, runner.leftovers(settings.temp_base)), note
+    leftover = runner.leftovers(settings.temp_base)
+    return assemble(drill, infos, version, started, leftover, drill_options(settings)), note
 
 
 def live_frame(done: Sequence[matrix.ColumnRun], planned: Sequence[str], infos: Sequence[matrix.CallInfo],
@@ -454,6 +469,9 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
                            help="extra test calls (ids U…) and expect: contracts, same validator and grammar")
     subparser.add_argument("--check", action="store_true",
                            help="run: exit 5 unless every declared expect: is met; warm: only report cache state")
+    subparser.add_argument("--all-wires", action="store_true",
+                           help="also record the context sent to the model (pre_llm_call) and the final reply "
+                                "(transform_llm_output): two extra rows, CONTEXT ADDED and REPLY CHANGED")
     subparser.add_argument("--jobs", type=int, default=3, help="columns run in parallel (default 3)")
     subparser.add_argument("--timeout", type=float, default=120.0, help="seconds per column before it is stopped")
     subparser.add_argument("--json", dest="json_out", metavar="PATH", help="also write the JSON report")

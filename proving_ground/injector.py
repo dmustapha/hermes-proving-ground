@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from . import safety
-from .observer import EventLog, load_plan, write_abort
+from .observer import EventLog, clip_text, load_plan, write_abort
 
 ABORT_SENTINEL = "PROVINGGROUND DRILL_ABORTED"
 DONE_SENTINEL = "PROVINGGROUND DRILL_DONE"
@@ -44,6 +44,24 @@ def completed_steps(messages: list[Any]) -> int:
     return sum(1 for m in messages if isinstance(m, dict) and m.get("role") == "assistant" and m.get("tool_calls"))
 
 
+def _content_text(content: Any) -> str:
+    """A message's text: a string as is, a list of content parts joined by their text fields."""
+    if isinstance(content, list):
+        return "\n".join(str(p.get("text", "")) for p in content if isinstance(p, dict) and p.get("type") == "text")
+    return "" if content is None else str(content)
+
+
+def context_view(request: Mapping[str, Any], messages: list[Any]) -> dict[str, Any]:
+    """What this step sends the model besides tool results and PROVING GROUND's own scripted tool calls: the system
+    and user messages, any assistant text, and the names of the tools offered (--all-wires only)."""
+    kept = [{"role": str(m.get("role")), "content": clip_text(_content_text(m.get("content")))}
+            for m in messages if isinstance(m, dict) and m.get("role") in ("system", "user", "assistant")
+            and not m.get("tool_calls")]
+    tools = request.get("tools") if isinstance(request.get("tools"), list) else []
+    names = sorted({str((t.get("function") or {}).get("name")) for t in tools if isinstance(t, dict)})
+    return {"messages": kept, "tools": names}
+
+
 def scripted_reply(request: Any, state_dir: Path, log: EventLog,
                    loaded_probe: Callable[[str], bool] | None = None,
                    order_probe: Callable[[], Any] | None = None) -> dict[str, Any]:
@@ -59,6 +77,8 @@ def scripted_reply(request: Any, state_dir: Path, log: EventLog,
     calls = plan["calls"]
     done = completed_steps(messages)
     log.write("llm_execution", step=done, n_messages=len(messages), provider_called=False)
+    if plan.get("wires"):
+        log.write("llm_context", step=done, **context_view(request, messages))
     if done == 0 and loaded_probe is not None:
         expected = [str(k) for k in plan.get("subjects") or []]
         loaded = [k for k in expected if _safe_probe(loaded_probe, k)]

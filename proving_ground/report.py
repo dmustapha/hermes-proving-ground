@@ -27,12 +27,13 @@ LIVE_BANNER = "model: NOT CALLED · provider: none · no provider keys · approv
 STYLE = {mx.Outcome.BLOCKED: "bold cyan", mx.Outcome.REWROTE: "bold yellow", mx.Outcome.RESULT_CHANGED: "bold magenta",
          mx.Outcome.APPROVAL_GATED: "bold blue", mx.Outcome.PASSED_THROUGH: "dim", mx.Outcome.ESCAPED: "bold red",
          mx.Outcome.ERRORED: "red", mx.Outcome.LOAD_FAILED: "red", mx.Outcome.NOT_RUN: "dim",
-         mx.Outcome.NOT_APPLICABLE: "dim"}
+         mx.Outcome.NOT_APPLICABLE: "dim", mx.Outcome.CONTEXT_ADDED: "bold green",
+         mx.Outcome.REPLY_CHANGED: "bold green"}
 QUOTE_PREFIX = "│ "  # every line of plugin-authored text (raw output, block messages) is quoted, never PG's words
 QUOTE_TITLE = "quoted from the plugin stack, not PROVING GROUND's words"
 _HTML_QUOTED = re.compile(r'<pre class="quoted">.*?</pre>', re.S)
 ANSI = {"bold cyan": "\033[1;36m", "bold yellow": "\033[1;33m", "bold magenta": "\033[1;35m", "bold blue": "\033[1;34m",
-        "dim": "\033[2m", "bold red": "\033[1;31m", "red": "\033[31m"}
+        "dim": "\033[2m", "bold red": "\033[1;31m", "red": "\033[31m", "bold green": "\033[1;32m"}
 RESET = "\033[0m"
 
 
@@ -130,7 +131,8 @@ def matrix_to_dict(m: mx.Matrix) -> dict[str, Any]:
             "unstable": sorted(m.unstable), "skipped": [list(s) for s in m.skipped],
             "needs_env": list(m.needs_env), "aborted": dict(m.aborted),
             "load_failed": {k: list(v) for k, v in m.load_failed.items()},
-            "unreplayable": [[cid, list(r)] for cid, r in m.unreplayable]}
+            "unreplayable": [[cid, list(r)] for cid, r in m.unreplayable],
+            **({"options": dict(m.options)} if m.options else {})}  # a default drill's report keeps its old keys
 
 
 def _cell_from(raw: Mapping[str, Any]) -> mx.Cell:
@@ -170,7 +172,8 @@ def matrix_from_dict(data: Mapping[str, Any]) -> mx.Matrix:
                      tuple(tuple(s) for s in data.get("skipped") or ()), tuple(data.get("needs_env") or ()),
                      dict(data.get("aborted") or {}),
                      {k: tuple(v) for k, v in (data.get("load_failed") or {}).items()},
-                     tuple((cid, tuple(r)) for cid, r in data.get("unreplayable") or ()))
+                     tuple((cid, tuple(r)) for cid, r in data.get("unreplayable") or ()),
+                     {str(k): str(v) for k, v in (data.get("options") or {}).items()})
 
 # File: proving_ground/report.py  (part 2 of 3: terminal table, Markdown, cell detail)
 
@@ -186,7 +189,8 @@ def conditions_lines(m: mx.Matrix) -> list[str]:
             f"sandbox: {c.sandbox}", f"Hermes: {c.hermes_version}", c.baseline_note,
             f"load order given to the child (requires_plugins first, then alphabetical): {', '.join(c.load_order) or 'none'}",
             *([f"load order mismatch: {c.order_note}"] if c.order_note else []),
-            f"coverage: {c.coverage or 'n/a'}", f"cleanup: {left}",
+            f"coverage: {c.coverage or 'n/a'}", *[f"{name}: {note}" for name, note in m.options.items()],
+            f"cleanup: {left}",
             f"wall time: {c.wall_s:.1f}s · started {c.started_at}"]
 
 
@@ -196,7 +200,7 @@ def _rich_table(calls: Sequence[mx.CallInfo], columns: Sequence[str],
     from rich import box
     from rich.table import Table
 
-    table = Table(title=f"{HEADLINE}\n{OBSERVED.format(n=len(calls))}", box=box.SIMPLE_HEAD, expand=False,
+    table = Table(title=f"{HEADLINE}\n{OBSERVED.format(n=mx.count_test_calls(calls))}", box=box.SIMPLE_HEAD, expand=False,
                   title_style="bold", header_style="bold", pad_edge=False)
     table.add_column("test call", no_wrap=call_width is None, width=call_width)
     for name in columns:
@@ -360,22 +364,52 @@ def _attribution_for(m: mx.Matrix, call_id: str) -> list[str]:
             for a in m.attributions if a.call_id == call_id] or ["no plugin effect to attribute"]
 
 
+def _context_lines(obs: mx.CallObservation) -> list[str]:
+    """The model's view of the turn, one block per distinct step view: role headers, then the text."""
+    lines: list[str] = []
+    for index, view in enumerate(mx.context_views(obs), 1):
+        lines.append(f"[view {index}] tools offered: {', '.join(view.get('tools') or []) or 'none'}")
+        for message in view.get("messages") or []:
+            lines += [f"[{message.get('role')}]", *str(message.get("content") or "").splitlines()]
+    return lines
+
+
+def _wire_sections(obs: mx.CallObservation, base: mx.CallObservation) -> list[tuple[str, list[str]]]:
+    if obs.call_id == mx.CONTEXT_ID:
+        mine, theirs = _context_lines(obs), _context_lines(base)
+        return [("prompt as sent by PROVING GROUND", [str(obs.injected_args.get("prompt"))]),
+                (f"what reached the model (system prompt, user turn, tools offered) · {QUOTE_TITLE}",
+                 quoted(_clip("\n".join(mine)))),
+                (f"model context: baseline vs this column · {QUOTE_TITLE}",
+                 quoted(list(difflib.unified_diff(theirs, mine, "baseline context", "this column context",
+                                                  lineterm=""))[:MAX_DETAIL_LINES] or ["identical"]))]
+    return [("final reply as scripted by PROVING GROUND", [str(obs.injected_args.get("reply"))]),
+            (f"1 · reply as the model produced it (seen by transform_llm_output) · {QUOTE_TITLE}",
+             quoted(_clip(obs.tool_raw))),
+            (f"2 · reply delivered (seen by post_llm_call) · {QUOTE_TITLE}", quoted(_clip(obs.delivered))),
+            (f"delivered reply: baseline vs this column · {QUOTE_TITLE}",
+             quoted(_diff(base.delivered, obs.delivered, "reply") or ["identical"]))]
+
+
 def detail_sections(m: mx.Matrix, column: str, call_id: str) -> list[tuple[str, list[str]]]:
     obs, base = m.observations[column][call_id], m.observations["baseline"][call_id]
     cell = m.cells[(column, call_id)]
     info = next(c for c in m.calls if c.id == call_id)
-    return [("cell", [f"{call_id} × {column_title(column)}: {cell_label(cell)}",
+    head = [("cell", [f"{call_id} × {column_title(column)}: {cell_label(cell)}",
                       f"provenance: {provenance(column)} column · call {info.provenance}", info.purpose, cell.note]),
             (f"full-stack attribution for {call_id} (observed in one solo run per plugin, against the zero-plugin "
              "baseline)",
-             _attribution_for(m, call_id)),
-            ("args as sent by PROVING GROUND (from the plan)", [str(dict(obs.injected_args))]),
-            (f"args that actually ran (after every plugin) · {QUOTE_TITLE}", quoted([str(dict(obs.final_args))])),
-            (f"1 · terminal output, raw · {QUOTE_TITLE}", quoted(_clip(obs.terminal_raw))),
-            (f"2 · tool result before result rewriters · {QUOTE_TITLE}", quoted(_clip(obs.tool_raw))),
-            (f"3 · delivered to the model · {QUOTE_TITLE}", quoted(_clip(obs.delivered))),
-            (f"delivered: baseline vs this column · {QUOTE_TITLE}",
-             quoted(_delivered_diff(base.delivered, obs.delivered) or ["identical"]))]
+             _attribution_for(m, call_id))]
+    if obs.tool == mx.WIRE_TOOL:
+        return head + _wire_sections(obs, base)
+    return head + [
+        ("args as sent by PROVING GROUND (from the plan)", [str(dict(obs.injected_args))]),
+        (f"args that actually ran (after every plugin) · {QUOTE_TITLE}", quoted([str(dict(obs.final_args))])),
+        (f"1 · terminal output, raw · {QUOTE_TITLE}", quoted(_clip(obs.terminal_raw))),
+        (f"2 · tool result before result rewriters · {QUOTE_TITLE}", quoted(_clip(obs.tool_raw))),
+        (f"3 · delivered to the model · {QUOTE_TITLE}", quoted(_clip(obs.delivered))),
+        (f"delivered: baseline vs this column · {QUOTE_TITLE}",
+         quoted(_delivered_diff(base.delivered, obs.delivered) or ["identical"]))]
 
 
 def render_cell_detail(m: mx.Matrix, column: str, call_id: str) -> str:
@@ -388,10 +422,10 @@ def render_cell_detail(m: mx.Matrix, column: str, call_id: str) -> str:
 
 CSS = """
 :root{color-scheme:light dark;--bg:#fbfaf7;--fg:#1d1d1f;--muted:#6b6b70;--line:#e6e3dd;--card:#ffffff;--code:#f6f4ef;
---blocked:#0e7490;--rewrote:#a16207;--changed:#a21caf;--gated:#1d4ed8;--through:#8a8a8f;--escaped:#b91c1c;--errored:#b91c1c}
+--blocked:#0e7490;--rewrote:#a16207;--changed:#a21caf;--gated:#1d4ed8;--through:#8a8a8f;--escaped:#b91c1c;--errored:#b91c1c;--wire:#15803d}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121214;--fg:#ececef;--muted:#9a9aa2;
 --line:#2a2a2e;--card:#1a1a1d;--code:#141416;--blocked:#22d3ee;--rewrote:#facc15;--changed:#e879f9;--gated:#60a5fa;
---through:#8a8a8f;--escaped:#f87171;--errored:#f87171}}
+--through:#8a8a8f;--escaped:#f87171;--errored:#f87171;--wire:#4ade80}}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:1180px;margin:0 auto;padding:32px 16px 48px}a{color:var(--gated)}
@@ -412,6 +446,7 @@ td a:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 .REWROTE{color:var(--rewrote);background:color-mix(in srgb,var(--rewrote) 13%,transparent)}
 .RESULT_CHANGED{color:var(--changed);background:color-mix(in srgb,var(--changed) 13%,transparent)}
 .APPROVAL_GATED{color:var(--gated);background:color-mix(in srgb,var(--gated) 13%,transparent)}
+.CONTEXT_ADDED,.REPLY_CHANGED{color:var(--wire);background:color-mix(in srgb,var(--wire) 13%,transparent)}
 .ESCAPED{color:var(--escaped);background:color-mix(in srgb,var(--escaped) 16%,transparent)}
 .ERRORED,.LOAD_FAILED{color:var(--errored);background:color-mix(in srgb,var(--errored) 10%,transparent)}
 .PASSED_THROUGH,.NOT_RUN,.NOT_APPLICABLE{color:var(--through);font-weight:500}
