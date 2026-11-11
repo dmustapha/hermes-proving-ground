@@ -25,7 +25,7 @@ PROVING GROUND sends ten known, harmless test calls through your installed Herme
 - **Absolute-path writes or reads by another plugin's own code** (not through a tool call) outside HOME and the sandbox. The env redirection covers `~`, XDG and TMPDIR, not arbitrary absolute paths a plugin hard-codes; it is not an OS sandbox. Disclosed. STRETCH: `sandbox-exec` / `bwrap`.
 - **A tool call that escapes before PG sees it.** ESCAPED is recorded in `post_tool_call`, after execution: detected after it ran, not prevented.
 - **launchd user-domain environment** (`launchctl setenv`): on macOS the per-home gateway daemon is a launchd job, and launchd may merge user-domain variables over the plist env (ARCH-F17, unverified). Tracked in LIMITATIONS with a check to run before packaging.
-- **A session-level `/yolo` toggle** in the user's live session. Its check (`tools/approval.py:579`) is not a public API. PG refuses on env and config only and files a Hermes issue.
+- **A session-level `/yolo` toggle** in the user's live session. Its check (`tools/approval.py:579`) is not a public API. PG refuses on env and config only; a Hermes issue asking for a public check is drafted (not yet filed).
 - **A malicious local user** who forges all three activation keys in a temp dir of their own. They already control the machine; the keys exist to stop accidental activation, not a local adversary.
 - **Stateful or time-dependent plugins** whose behaviour differs between solo and stack runs for reasons unrelated to interaction. They can produce an `interaction` attribution; the report says "appears only in combination", not "caused by combination".
 

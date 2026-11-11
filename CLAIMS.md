@@ -28,3 +28,25 @@
 | CL-20 | Leave the implicated plugin out, run again, and the cell and the contract clear. | test | tests/test_drill_fixtures_e2e.py::test_without_rerun_clears_the_cell_and_the_contract |
 | CL-21 | A plugin that did not load is reported LOAD FAILED, never PASSED THROUGH. | test | tests/test_matrix.py::test_unconfirmed_plugin_is_load_failed_never_passed_through |
 | CL-22 | PROVING GROUND deletes only temp directories it created. | test | tests/test_cleanup.py::test_unowned_directories_are_never_swept |
+| CL-23 | The committed fixture drill recorded 10 test calls, 3 plugins, 6 behaviours and 1 cross-plugin finding. | grep | docs/fixture-report.json :: "tally": "10 test calls · 3 plugins · 6 behaviours recorded · 1 cross-plugin finding" |
+| CL-24 | In that drill the model was not called: 61 scripted steps answered by PROVING GROUND, 0 provider calls. | grep | docs/fixture-report.json :: NOT CALLED \(scripted turn: 61 llm_execution steps answered by PROVING GROUND, 0 provider calls\) |
+| CL-25 | That drill took 18.4 s on a warm cache. | grep | docs/fixture-report.json :: "wall_s": 18\.4\d* |
+| CL-26 | That drill left 0 drill processes and 0 drill roots. | grep | docs/fixture-report.json :: "leftover_processes": 0,\s*"leftover_roots": 0 |
+| CL-27 | In that drill fx_guard only saw TC03's original command in the stack, and the rewritten command ran (REWRITE_UNSEEN_BY). | grep | docs/fixture-report.json :: "kind": "REWRITE_UNSEEN_BY",\s*"call_id": "TC03" |
+| CL-28 | In that drill TC04's removed FAILED line is attributed to fx_trimmer by one solo run. | grep | docs/fixture-report.md :: attribution TC04 RESULT CHANGED: solo-match — observed in one solo run: fx_trimmer |
+| CL-29 | `--check` exits 5 when a declared expect: is not met. | grep | proving_ground/cli.py :: return 5 if check and matrix\.check_expectations |
+| CL-30 | `sweep` prints how many stale temporary roots it removed. | grep | proving_ground/cli.py :: removed \{len\(removed\)\} stale sandbox roots |
+| CL-31 | Plugins that declare requires_env are shown N/A, because the child has no credentials. | grep | proving_ground/matrix.py :: declares requires_env; the sandbox has no credentials |
+| CL-32 | The child never gets --yolo, -z or --oneshot. | test | tests/test_child_spawn.py::test_argv_never_bypasses_approvals |
+| CL-33 | The child config forces approvals to manual with headless deny. | test | tests/test_child_spawn.py::test_child_config_forces_manual_deny |
+| CL-34 | PROVING GROUND registers llm_execution middleware and tool-hook taps, and a child Hermes subprocess runs each column. | grep | __init__.py :: ctx\.register_middleware\("llm_execution" |
+| CL-35 | A core approval gate hidden by a stack block is not reported as a masked plugin effect (58cab27). | test | tests/test_matrix.py::test_core_approval_gate_hidden_by_a_stack_block_is_not_masked |
+| CL-36 | The cell detail says its attribution is the full-stack one (5e39586). | test | tests/test_cell_detail.py::test_solo_cell_detail_labels_attribution_as_the_full_stack_one |
+| CL-37 | A plugin's change on top of core truncation is attributed to the plugin (bcfbe4c). | test | tests/test_matrix.py::test_plugin_result_change_over_core_truncation_is_attributed_to_the_plugin |
+| CL-38 | The real catalog stack run recorded 10 test calls, 5 plugins, 19 behaviours and 1 cross-plugin finding. | grep | docs/real-stack-report.md :: 10 test calls · 5 plugins · 19 behaviours recorded · 1 cross-plugin finding |
+| CL-39 | Its finding is MASKED_IN_STACK on TC05 for hermes-detox. | grep | docs/real-stack-report.md :: MASKED_IN_STACK: hermes-detox RESULT CHANGED TC05 on its own; in the full stack that effect does not reach the model\. |
+| CL-40 | In that run readonly-guard stops TC05 alone and in the full stack. | grep | docs/real-stack-report.md :: TC05 long output \x7c RESULT CHANGED \(core\) \x7c PASSED THROUGH \x7c RESULT CHANGED \x7c PASSED THROUGH \x7c BLOCKED \x7c PASSED THROUGH \x7c BLOCKED \x7c |
+| CL-41 | As of 2026-11-11, xray (#149414), crash-test (#151102), policy-backtester (#151434) and benchforge (#152504) are merged catalog entries. | grep | docs/field-2026-11-11.md :: (?s)#149414 MERGED.*xray.*#151102 MERGED.*crash-test.*#151434 MERGED.*policy-backtester.*#152504 MERGED.*benchforge |
+| CL-42 | As of 2026-11-11, a live search listed no catalog entry that tests the composed stack. | grep | docs/field-2026-11-11.md :: None of these entries runs several installed plugins together |
+| CL-43 | The first run fetches Hermes's runtime once, about 650 MB. | grep | proving_ground/cli.py :: one-time ~650 MB download |
+| CL-44 | CI runs the pure tier, verify-claims, hermes plugins validate and doctor on Hermes v0.23.1. | grep | .github/workflows/validate.yml :: (?s)pytest -m "not hermes".*verify-claims\.py.*plugins validate \..*plugins doctor \. --ci |
