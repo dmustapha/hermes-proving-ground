@@ -196,12 +196,20 @@ def child_env(base: Mapping[str, str], root: Path, token: str, *, network: bool 
     return env
 
 
+VERIFY_NUDGE_ROUNDS = 3  # Hermes stops asking pre_verify after three continue nudges (agent/turn_stop_gates.py:53-76)
+
+
+def max_turns(n_calls: int) -> int:
+    """One model step per call, the final reply and a spare, plus one step for each pre_verify nudge Hermes allows."""
+    return n_calls + 2 + VERIFY_NUDGE_ROUNDS
+
+
 def child_argv(launch: Path | Sequence[str], n_calls: int) -> list[str]:
     """`launch` is the hermes executable or the resolved interpreter prefix (launch_prefix)."""
     prefix = [str(launch)] if isinstance(launch, (str, Path)) else [str(a) for a in launch]
     return [*prefix, "chat", "-q", DRILL_PROMPT, "-Q", "-t", safety.CHILD_TOOLSETS,
             "--provider", "custom", "--base-url", DEAD_PROVIDER_URL, "-m", safety.SCRIPTED_MODEL,
-            "--max-turns", str(n_calls + 2)]
+            "--max-turns", str(max_turns(n_calls))]
 
 
 def create_drill_root(temp_base: Path) -> Path:

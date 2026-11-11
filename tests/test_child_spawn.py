@@ -23,7 +23,7 @@ def test_argv_never_bypasses_approvals() -> None:
     argv = runner.child_argv(Path("/usr/local/bin/hermes"), 10)
     assert not {"--yolo", "-z", "--oneshot"} & set(argv)
     assert argv[argv.index("--base-url") + 1] == runner.DEAD_PROVIDER_URL
-    assert argv[argv.index("--max-turns") + 1] == "12"
+    assert argv[argv.index("--max-turns") + 1] == "15"  # 10 calls + final + spare + 3 pre_verify nudges
 
 
 def test_child_config_forces_manual_deny(tmp_path: Path) -> None:
