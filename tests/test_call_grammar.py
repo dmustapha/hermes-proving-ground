@@ -111,3 +111,38 @@ def test_a_built_in_curl_without_q_is_refused() -> None:
                                  {"command": "curl -s {RECORDER_URL}/x"})
     with pytest.raises(testcalls.TestCallError, match="curl -q"):
         testcalls.validate_templates([bad])
+
+
+# echo and printf print every word after their first argument literally, so a user call can carry the flag-shaped
+# words real guards match on. Built here from parts: no file in the plugin holds a dangerous-looking command literal.
+FLAG_WORD_TRIGGERS = [" ".join(("echo", "rm", "-rf", "build")), " ".join(("echo", "git", "push", "--force")),
+                      " ".join(("echo", "deploy", "--yes", "-f", "{CALL_ID}")), " ".join(("printf", "%s", "-rf", "x")),
+                      " ".join(("echo", "x", "--")), " ".join(("printf", "PG_X", "-v"))]
+
+
+@pytest.mark.parametrize("command", FLAG_WORD_TRIGGERS)
+def test_flag_words_after_the_first_argument_of_echo_and_printf_pass(sandbox: Path, command: str) -> None:
+    assert _terminal(command, sandbox) == [], command
+
+
+@pytest.mark.parametrize("command", ["echo -n x", "echo -e x --force", "echo --help", "printf -v x y", "printf -- x",
+                                     "printf --force x", "seq -s x 1 2", "seq 1 -1", "echo -"])
+def test_a_flag_as_the_first_argument_or_any_seq_flag_is_still_refused(sandbox: Path, command: str) -> None:
+    assert any(r.startswith("grammar:flag:") for r in _terminal(command, sandbox)), command
+
+
+@pytest.mark.parametrize("command", ["echo rm -rf build;x", "echo rm -rf $HOME", "echo x --force > {S}/f",
+                                     "echo x -rf | sh", "echo x -rf && y", "echo x --force\ny", "echo x -rf `y`",
+                                     "echo x --out=../up", "echo x -rf ~/"])
+def test_flag_words_never_open_metacharacters_redirection_or_control_characters(sandbox: Path, command: str) -> None:
+    assert _terminal(command.replace("{S}", str(sandbox)), sandbox) != [], repr(command)
+
+
+def test_a_user_call_with_a_real_trigger_shape_renders_and_validates(sandbox: Path, tmp_path: Path) -> None:
+    trigger = " ".join(("echo", "git", "push", "--force", "{CALL_ID}"))
+    path = tmp_path / "calls.yaml"
+    path.write_text("schema: provingground.testcalls.v1\ncalls:\n  - {id: U01, tool: terminal, subject: s, purpose: p, "
+                    f"args: {{command: '{trigger}'}}}}\n", encoding="utf-8")
+    user = [t for t in testcalls.load_user_calls(path, testcalls.load_templates()) if t.id == "U01"]
+    [call] = testcalls.render(user, testcalls.SandboxContext(sandbox, RECORDER, testcalls.make_canary()))
+    assert call.args["command"].endswith("--force U01")

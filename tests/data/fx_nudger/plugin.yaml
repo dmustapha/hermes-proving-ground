@@ -1,0 +1,5 @@
+name: fx_nudger
+version: "0.1.0"
+description: "Test-only: asks the agent once, through pre_verify, to re-read its edits before the turn ends."
+author: dmustapha
+provides_hooks: [pre_verify]

@@ -19,6 +19,7 @@ CALL_HOOK_NAMES: tuple[str, ...] = (
     "post_tool_call",
     "transform_tool_result",
     "transform_terminal_output",
+    "pre_verify",
     "pre_approval_request",
     "post_approval_response",
 )

@@ -69,10 +69,24 @@ def _as_args(args: Any) -> dict[str, Any]:
     return dict(args) if isinstance(args, Mapping) else {}
 
 
+def probe_refs(state_dir: Path) -> frozenset[str]:
+    """The call ids of the plan's block-only probes; a plan that cannot be read has none (every off-list tool aborts)."""
+    try:
+        calls = load_plan(state_dir).get("calls") or []
+    except (OSError, ValueError, AttributeError):
+        return frozenset()
+    return frozenset(str(c.get("call_ref")) for c in calls
+                     if isinstance(c, Mapping) and c.get("probe") is True and c.get("tool") in safety.PROBE_TOOLS)
+
+
 def make_hooks(state_dir: Path, sandbox: Path, log: EventLog) -> dict[str, Callable[..., Any]]:
+    probes = probe_refs(state_dir)
+
     def pre_tool_call(tool_name: str = "", args: Any = None, tool_call_id: Any = None, **_: Any) -> Any:
         injected = _as_args(args)
         log.write("pre_tool_call", tool=tool_name, args=injected, tool_call_id=tool_call_id)
+        if tool_name in safety.PROBE_TOOLS and str(tool_call_id) in probes:
+            return {"action": "block", "message": safety.PROBE_BLOCK_MESSAGE}  # never runs; no abort, the drill goes on
         if tool_name not in safety.ALLOWED_TOOLS:
             write_abort(state_dir, log, "TOOL_NOT_ALLOWED")
             return {"action": "block", "message": TOOL_BLOCK_MESSAGE}
@@ -97,6 +111,8 @@ def make_hooks(state_dir: Path, sandbox: Path, log: EventLog) -> dict[str, Calla
         final = _as_args(args)
         log.write("post_tool_call", tool=tool_name, args=final, result=result, status=status,
                   error_type=error_type, error_message=error_message, tool_call_id=tool_call_id)
+        if str(tool_call_id) in probes and status == "blocked":
+            return  # a blocked probe never ran, whatever its final args say
         reasons = safety.escape_reasons(final, sandbox)
         if reasons:
             log.write("escaped", tool_call_id=tool_call_id, reasons=reasons, args=final)
@@ -109,9 +125,16 @@ def make_hooks(state_dir: Path, sandbox: Path, log: EventLog) -> dict[str, Calla
         observe.__name__ = f"provingground_{hook}"
         return observe
 
+    def pre_verify(attempt: Any = None, changed_paths: Any = None, coding: Any = None, **_: Any) -> None:
+        """The turn-stop gate after file edits (agent/turn_stop_gates.py:53-76). Returns None, so it never adds a
+        nudge; each call is one time the turn reached its end with edits, so two calls mean a plugin extended it."""
+        paths = [str(p) for p in changed_paths] if isinstance(changed_paths, (list, tuple, set)) else []
+        log.write("pre_verify", attempt=attempt, changed_paths=sorted(paths), coding=coding)
+        return None
+
     return {"pre_tool_call": pre_tool_call, "post_tool_call": post_tool_call,
             "transform_tool_result": transform_tool_result,
-            "transform_terminal_output": transform_terminal_output,
+            "transform_terminal_output": transform_terminal_output, "pre_verify": pre_verify,
             "pre_approval_request": approval_observer("pre_approval_request"),
             "post_approval_response": approval_observer("post_approval_response")}
 

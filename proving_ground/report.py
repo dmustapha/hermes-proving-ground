@@ -29,7 +29,8 @@ STYLE = {mx.Outcome.BLOCKED: "bold cyan", mx.Outcome.REWROTE: "bold yellow", mx.
          mx.Outcome.APPROVAL_GATED: "bold blue", mx.Outcome.PASSED_THROUGH: "dim", mx.Outcome.ESCAPED: "bold red",
          mx.Outcome.ERRORED: "red", mx.Outcome.LOAD_FAILED: "red", mx.Outcome.NOT_RUN: "dim",
          mx.Outcome.NOT_APPLICABLE: "dim", mx.Outcome.CONTEXT_ADDED: "bold green",
-         mx.Outcome.REPLY_CHANGED: "bold green"}
+         mx.Outcome.REPLY_CHANGED: "bold green", mx.Outcome.TURN_EXTENDED: "bold green",
+         mx.Outcome.NOT_EXECUTED: "dim"}
 QUOTE_PREFIX = "│ "  # every line of plugin-authored text (raw output, block messages) is quoted, never PG's words
 QUOTE_TITLE = "quoted from the plugin stack, not PROVING GROUND's words"
 _HTML_QUOTED = re.compile(r'<pre class="quoted">.*?</pre>', re.S)
@@ -157,7 +158,7 @@ def _source(m: mx.Matrix, cell: mx.Cell) -> str:
 
 def notable_cells(m: mx.Matrix) -> list[str]:
     """Every cell that ran and is not PASSED THROUGH, as `<CALL> --column <COLUMN>` plus its label and source."""
-    quiet = (mx.Outcome.PASSED_THROUGH, mx.Outcome.NOT_RUN, mx.Outcome.NOT_APPLICABLE)
+    quiet = (mx.Outcome.PASSED_THROUGH, mx.Outcome.NOT_EXECUTED, mx.Outcome.NOT_RUN, mx.Outcome.NOT_APPLICABLE)
     cells = [m.cells[(name, call.id)] for call in m.calls for name in m.columns
              if (name, call.id) in m.cells and m.cells[(name, call.id)].primary not in quiet]
     if not cells:
@@ -652,10 +653,10 @@ td a:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 .REWROTE{color:var(--rewrote);background:color-mix(in srgb,var(--rewrote) 13%,transparent)}
 .RESULT_CHANGED{color:var(--changed);background:color-mix(in srgb,var(--changed) 13%,transparent)}
 .APPROVAL_GATED{color:var(--gated);background:color-mix(in srgb,var(--gated) 13%,transparent)}
-.CONTEXT_ADDED,.REPLY_CHANGED{color:var(--wire);background:color-mix(in srgb,var(--wire) 13%,transparent)}
+.CONTEXT_ADDED,.REPLY_CHANGED,.TURN_EXTENDED{color:var(--wire);background:color-mix(in srgb,var(--wire) 13%,transparent)}
 .ESCAPED{color:var(--escaped);background:color-mix(in srgb,var(--escaped) 16%,transparent)}
 .ERRORED,.LOAD_FAILED{color:var(--errored);background:color-mix(in srgb,var(--errored) 10%,transparent)}
-.PASSED_THROUGH,.NOT_RUN,.NOT_APPLICABLE{color:var(--through);font-weight:500}
+.PASSED_THROUGH,.NOT_EXECUTED,.NOT_RUN,.NOT_APPLICABLE{color:var(--through);font-weight:500}
 .panel{display:none;scroll-margin-top:16px}.panel:target{display:block}
 pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:0;overflow-x:auto;
 white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}pre.quoted{border-left:3px solid var(--muted)}

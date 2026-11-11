@@ -9,6 +9,8 @@ import re
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
+from .probes import PROBE_BLOCK_MESSAGE, PROBE_TOOLS, PROBE_TOOLSETS  # noqa: F401 (re-exported)
+
 TOKEN_ENV = "PROVINGGROUND_DRILL_TOKEN"
 STATE_DIRNAME = ".provingground"
 TOKEN_FILENAME = "drill.token"
@@ -27,6 +29,9 @@ TOKEN_HEX_LEN = 64
 ROOT_NAME = re.compile(r"^provingground-[a-z0-9_]{8}$")
 TEMP_BASES: tuple[str, ...] = ("/tmp", "/private/tmp", "/var/tmp", "/var/folders", "/private/var/folders")
 ALLOWED_TOOLS = frozenset({"terminal", "write_file", "read_file", "patch"})
+# Block-only probe tools (defined in the pure probes module). Hermes rejects a tool name outside the enabled toolsets
+# before pre_tool_call (agent/turn_tool_round.py:60,122), so every child enables the probes' toolsets too.
+CHILD_TOOLSETS = ",".join(["terminal", "file", *sorted(set(PROBE_TOOLSETS.values()))])
 ALLOWED_ABSOLUTE_PATHS = frozenset({"/dev/null"})
 ALLOWED_HOSTS = frozenset({"127.0.0.1"})
 INTERACTIVE_PLATFORMS = frozenset({"cli", "tui", "local", "desktop"})
@@ -35,12 +40,16 @@ NETWORK_PROGRAMS = frozenset({"curl", "wget", "nc", "ncat", "netcat", "telnet", 
                               "ftp", "socat", "http", "https"})
 # Closed grammar for any call PG derives from someone else's output (cross-check) or a user file.
 DERIVED_PROGRAMS = frozenset({"echo", "printf", "seq", "curl", "chmod"})
+LITERAL_PRINTERS = frozenset({"echo", "printf"})  # words after the first argument are printed, never parsed as flags
 _DERIVED_TOKEN = re.compile(r"^[A-Za-z0-9_.,:=+@%/{}-]+$")
-_CONTROL = re.compile(r"[\x00-\x1f\x7f]")  # a newline or CR is a second shell command; a tab hides a token
+CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")  # a newline or CR is a second shell command; a tab hides a token
 _DERIVED_FORBIDDEN = re.compile(r"[$`;&|<>\\()*?!\[\]\x00-\x1f\x7f]|\.\.|file:|~")
 # Per-program flag allow-list: option words outside it can pull in unchecked input (`curl -K cfg`).
 # curl must start with -q (ignore every .curlrc), may carry -s and one `-o <sandbox path>`, and exactly one URL, the
-# run's own recorder. chmod takes an octal mode and sandbox paths. echo, printf and seq take no flags at all.
+# run's own recorder. chmod takes an octal mode and sandbox paths. seq takes no flags. echo and printf print every word
+# after their first argument literally (bash's echo and printf parse options only before the first other word), so a
+# flag-like word such as `--force` is allowed there; their first argument must not start with `-` (`echo -e`,
+# `printf -v` would be options, not text).
 CURL_NO_RC = "-q"
 _OCTAL_MODE = re.compile(r"^[0-7]{3,4}$")
 SECRET_NAME = re.compile(r"(?i)(^\.env(\..*)?$|\.pem$|\.key$|\.p12$|\.pfx$|^auth[^/]*\.json$|^credentials(\..*)?$|"
@@ -234,7 +243,9 @@ def _program_reasons(program: str, args: list[str], recorder_url: str, box: Path
         return _curl_reasons(args, recorder_url, box)
     if program == "chmod":
         return _chmod_reasons(args, box)
-    return [f"grammar:flag:{program}:{w[:40]}" for w in args if w.startswith("-")]  # echo, printf, seq
+    if program in LITERAL_PRINTERS:
+        return [f"grammar:flag:{program}:{args[0][:40]}"] if args and args[0].startswith("-") else []
+    return [f"grammar:flag:{program}:{w[:40]}" for w in args if w.startswith("-")]  # seq
 
 
 def _derived_terminal_reasons(command: str, recorder_url: str, box: Path) -> list[str]:
@@ -252,13 +263,14 @@ def _derived_terminal_reasons(command: str, recorder_url: str, box: Path) -> lis
 
 def _control_reasons(args: Mapping[str, Any]) -> list[str]:
     return [f"grammar:control-character:{key}" for key, value in args.items()
-            if any(_CONTROL.search(text) for text in iter_strings(value))]
+            if any(CONTROL_CHARACTER.search(text) for text in iter_strings(value))]
 
 
 def derived_call_reasons(tool: str, args: Mapping[str, Any], sandbox: Path, recorder_url: str) -> list[str]:
     """Closed allow-list grammar for calls PG did not author itself (cross-check replays, user test calls).
     No string argument may hold a control character (\\x00-\\x1f, \\x7f). A terminal command is single-space
-    separated words: `echo|printf|seq` with no flags, `curl -q [-s] [-o <sandbox path>] <recorder URL>`, or
+    separated words: `echo|printf` whose first argument is not a flag (later words are printed literally, so
+    `echo rm -rf build` is valid), `seq` with no flags, `curl -q [-s] [-o <sandbox path>] <recorder URL>`, or
     `chmod <octal> <sandbox paths>`; no shell metacharacters, `$`, backticks, `..`, `~` or `file:`. Every path must
     also stay in the sandbox. Anything else is never executed; the caller records it as unreplayable."""
     if tool not in ALLOWED_TOOLS:

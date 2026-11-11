@@ -9,6 +9,9 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Mapping, Sequence
 
+from . import probes
+from .probes import PROBE_BLOCK_MESSAGE, PROBE_TOOLS
+
 TIMEOUT_BLOCK_MESSAGE = "pre_tool_call plugin callback timed out or is still running"  # plugins_dispatch.py:67
 RAISED_BLOCK = re.compile(r"^pre_tool_call plugin callback \S+ raised ")  # plugins_dispatch.py:89-95 (fail-closed crash)
 HARNESS_PREFIX = "PROVINGGROUND:"
@@ -27,9 +30,11 @@ class Outcome(str, Enum):
     APPROVAL_GATED = "APPROVAL_GATED"
     REWROTE = "REWROTE"
     RESULT_CHANGED = "RESULT_CHANGED"
+    TURN_EXTENDED = "TURN_EXTENDED"  # a pre_verify nudge kept the turn going after this call's file edit
     CONTEXT_ADDED = "CONTEXT_ADDED"  # --all-wires only: the model's view of the turn differs from the baseline's
     REPLY_CHANGED = "REPLY_CHANGED"  # --all-wires only: the delivered reply differs from the one the model produced
     PASSED_THROUGH = "PASSED_THROUGH"
+    NOT_EXECUTED = "NOT_EXECUTED"  # a block-only probe that PROVING GROUND itself blocked: no plugin acted first
     LOAD_FAILED = "LOAD_FAILED"
     NOT_RUN = "NOT_RUN"
     NOT_APPLICABLE = "NOT_APPLICABLE"
@@ -39,13 +44,17 @@ PRECEDENCE: tuple[Outcome, ...] = tuple(Outcome)
 LABELS: dict[Outcome, str] = {
     Outcome.ESCAPED: "ESCAPED", Outcome.ERRORED: "ERRORED", Outcome.BLOCKED: "BLOCKED",
     Outcome.APPROVAL_GATED: "APPROVAL-GATED", Outcome.REWROTE: "REWROTE",
-    Outcome.RESULT_CHANGED: "RESULT CHANGED", Outcome.CONTEXT_ADDED: "CONTEXT ADDED",
+    Outcome.RESULT_CHANGED: "RESULT CHANGED", Outcome.TURN_EXTENDED: "TURN EXTENDED",
+    Outcome.NOT_EXECUTED: "NOT EXECUTED (probe)", Outcome.CONTEXT_ADDED: "CONTEXT ADDED",
     Outcome.REPLY_CHANGED: "REPLY CHANGED", Outcome.PASSED_THROUGH: "PASSED THROUGH",
     Outcome.LOAD_FAILED: "LOAD FAILED", Outcome.NOT_RUN: "NOT RUN", Outcome.NOT_APPLICABLE: "N/A",
 }
-QUIET = frozenset({Outcome.PASSED_THROUGH, Outcome.LOAD_FAILED, Outcome.NOT_RUN, Outcome.NOT_APPLICABLE})
+QUIET = frozenset({Outcome.PASSED_THROUGH, Outcome.NOT_EXECUTED, Outcome.LOAD_FAILED, Outcome.NOT_RUN,
+                   Outcome.NOT_APPLICABLE})
 # A stack cell with one of these says nothing about what reached the model, so no solo effect can be "masked" by it.
-NO_STACK_RESULT = frozenset({Outcome.LOAD_FAILED, Outcome.NOT_RUN, Outcome.NOT_APPLICABLE, Outcome.ERRORED})
+# A probe's NOT EXECUTED in the stack means PROVING GROUND's own block came first in load order, so a subject's solo
+# block on it is not "masked" by another plugin either.
+NO_STACK_RESULT = frozenset({Outcome.NOT_EXECUTED, Outcome.LOAD_FAILED, Outcome.NOT_RUN, Outcome.NOT_APPLICABLE, Outcome.ERRORED})
 VERBS: dict[Outcome, str] = {Outcome.BLOCKED: "blocks", Outcome.APPROVAL_GATED: "sends to approval"}
 
 
@@ -75,6 +84,7 @@ class CallObservation:
     recorded: bool
     escaped_reasons: tuple[str, ...] = ()
     pre_seen_args: Mapping[str, Any] = field(default_factory=dict)
+    turn_extended: int = 0  # pre_verify nudges after the turn's edits, when this call's path was one of them
 
 
 @dataclass(frozen=True)
@@ -271,6 +281,7 @@ def column_from_events(name: str, plugins: tuple[str, ...], plan_calls: Sequence
     activated = next((e for e in events if e.get("ev") == "activated"), {})
     loaded = next((e for e in events if e.get("ev") == "plugins_loaded"), {})
     order = tuple(str(k) for k in loaded["order"]) if isinstance(loaded.get("order"), list) else None
+    observations = probes.with_turn_extensions(observations, events, sandbox, recorder_url, normalize_text)
     return ColumnRun(name, plugins, observations, abort_reason, wall_s, connects,
                      unconfirmed_plugins(plugins, events), steps, stray_escapes, activated.get("dont_write_bytecode"),
                      order)
@@ -282,11 +293,13 @@ def _text(obs: CallObservation) -> str:
 
 def _gate_outcome(obs: CallObservation) -> Outcome | None:
     if not obs.ran:
-        return Outcome.NOT_RUN
+        return Outcome.NOT_APPLICABLE if obs.tool in PROBE_TOOLS else Outcome.NOT_RUN
     if obs.escaped_reasons:
         return Outcome.ESCAPED
     if obs.status == "blocked":
         message = obs.error_message or ""
+        if message == PROBE_BLOCK_MESSAGE:
+            return Outcome.NOT_EXECUTED
         harness = message == TIMEOUT_BLOCK_MESSAGE or message.startswith(HARNESS_PREFIX) or bool(RAISED_BLOCK.match(message))
         return Outcome.ERRORED if harness else Outcome.BLOCKED
     if obs.status == "error" and any(p in _text(obs) for p in APPROVAL_PHRASES):
@@ -319,7 +332,7 @@ def _core_changed(obs: CallObservation) -> bool:
 def classify_baseline(obs: CallObservation) -> Cell:
     gate = _gate_outcome(obs)
     if gate is not None:
-        return Cell("baseline", obs.call_id, (gate,), core=gate is Outcome.APPROVAL_GATED)
+        return Cell("baseline", obs.call_id, (gate,), core=gate is Outcome.APPROVAL_GATED, note=probes.gate_note(gate))
     if _core_changed(obs):
         return Cell("baseline", obs.call_id, (Outcome.RESULT_CHANGED,), hop="core", core=True, note=CORE_NOTE)
     return Cell("baseline", obs.call_id, (Outcome.PASSED_THROUGH,))
@@ -336,10 +349,13 @@ def _result_hop(obs: CallObservation, base: CallObservation, comparable: bool) -
 
 def classify(column: str, obs: CallObservation, base: CallObservation, unstable: bool) -> Cell:
     gate = _gate_outcome(obs)
+    if gate is not None and obs.tool in PROBE_TOOLS and obs.final_args != obs.injected_args:
+        return Cell(column, obs.call_id, (Outcome.REWROTE, gate), hop="args", note=probes.gate_note(gate))
     if gate is not None:
         core = gate is Outcome.APPROVAL_GATED and _gate_outcome(base) is Outcome.APPROVAL_GATED
         raised = gate is Outcome.ERRORED and bool(RAISED_BLOCK.match(obs.error_message or ""))
-        return Cell(column, obs.call_id, (gate,), core=core, note="a plugin raised an exception" if raised else "")
+        return Cell(column, obs.call_id, (gate,), core=core,
+                    note="a plugin raised an exception" if raised else probes.gate_note(gate))
     outcomes: list[Outcome] = []
     hop: str | None = None
     inplace = bool(obs.pre_seen_args) and obs.pre_seen_args != obs.injected_args
@@ -351,6 +367,9 @@ def classify(column: str, obs: CallObservation, base: CallObservation, unstable:
     if result_hop is not None:
         outcomes.append(Outcome.RESULT_CHANGED)
         hop = result_hop
+    if obs.turn_extended > base.turn_extended:
+        outcomes.append(Outcome.TURN_EXTENDED)
+        hop = hop or "pre_verify"
     core_base = not rewrote and classify_baseline(base).core and _gate_outcome(base) is None
     if core_base and result_hop is None:
         return Cell(column, obs.call_id, (Outcome.RESULT_CHANGED,), hop="core", core=True, unstable=unstable,
@@ -897,4 +916,5 @@ def quiet_row(m: Matrix, call_id: str) -> bool:
     if any(cell is None for cell in row):
         return False
     kinds = {outcome for cell in row if cell is not None for outcome in cell.outcomes}
-    return Outcome.PASSED_THROUGH in kinds and kinds <= {Outcome.PASSED_THROUGH, Outcome.NOT_APPLICABLE}
+    return bool(kinds & {Outcome.PASSED_THROUGH, Outcome.NOT_EXECUTED}) and \
+        kinds <= {Outcome.PASSED_THROUGH, Outcome.NOT_EXECUTED, Outcome.NOT_APPLICABLE}

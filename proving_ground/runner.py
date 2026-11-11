@@ -198,7 +198,7 @@ def child_env(base: Mapping[str, str], root: Path, token: str, *, network: bool 
 def child_argv(launch: Path | Sequence[str], n_calls: int) -> list[str]:
     """`launch` is the hermes executable or the resolved interpreter prefix (launch_prefix)."""
     prefix = [str(launch)] if isinstance(launch, (str, Path)) else [str(a) for a in launch]
-    return [*prefix, "chat", "-q", DRILL_PROMPT, "-Q", "-t", "terminal,file",
+    return [*prefix, "chat", "-q", DRILL_PROMPT, "-Q", "-t", safety.CHILD_TOOLSETS,
             "--provider", "custom", "--base-url", DEAD_PROVIDER_URL, "-m", safety.SCRIPTED_MODEL,
             "--max-turns", str(n_calls + 2)]
 
