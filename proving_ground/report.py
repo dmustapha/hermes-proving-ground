@@ -23,6 +23,7 @@ FORBIDDEN_CLAIMS = (re.compile(r"\bsafe\b", re.I), re.compile(r"\bsecure[ds]?\b"
                     re.compile(r"\bprotected\b", re.I), re.compile(r"\bguarantee", re.I),
                     re.compile(r"\bcertif", re.I), re.compile(r"\bpassed\b(?!\s+through)", re.I))
 MAX_DETAIL_LINES = 40
+MAX_DETAIL_CHARS = 8192  # per detail section; a single-line JSON result is otherwise unbounded
 LIVE_BANNER = "model: NOT CALLED · provider: none · no provider keys · approvals: manual, headless deny"
 STYLE = {mx.Outcome.BLOCKED: "bold cyan", mx.Outcome.REWROTE: "bold yellow", mx.Outcome.RESULT_CHANGED: "bold magenta",
          mx.Outcome.APPROVAL_GATED: "bold blue", mx.Outcome.PASSED_THROUGH: "dim", mx.Outcome.ESCAPED: "bold red",
@@ -191,12 +192,15 @@ def conditions_lines(m: mx.Matrix) -> list[str]:
 
 
 def _rich_table(calls: Sequence[mx.CallInfo], columns: Sequence[str],
-                cells: Mapping[tuple[str, str], mx.Cell], call_width: int | None = None) -> Any:
-    """Outcome labels wrap only at their "(core)" suffix; the call column wraps (to call_width) on narrow terminals."""
+                cells: Mapping[tuple[str, str], mx.Cell], call_width: int | None = None,
+                observed: int | None = None) -> Any:
+    """Outcome labels wrap only at their "(core)" suffix; the call column wraps (to call_width) on narrow terminals.
+    *observed* is the drill's call count when --focus prints fewer rows than the drill ran."""
     from rich import box
     from rich.table import Table
 
-    table = Table(title=f"{HEADLINE}\n{OBSERVED.format(n=len(calls))}", box=box.SIMPLE_HEAD, expand=False,
+    n = len(calls) if observed is None else observed
+    table = Table(title=f"{HEADLINE}\n{OBSERVED.format(n=n)}", box=box.SIMPLE_HEAD, expand=False,
                   title_style="bold", header_style="bold", pad_edge=False)
     table.add_column("test call", no_wrap=call_width is None, width=call_width)
     for name in columns:
@@ -225,19 +229,33 @@ def display_order(columns: Sequence[str], width: int) -> list[str]:
 
 
 def _print_table(console: Any, calls: Sequence[mx.CallInfo], columns: Sequence[str],
-                 cells: Mapping[tuple[str, str], mx.Cell]) -> None:
+                 cells: Mapping[tuple[str, str], mx.Cell], observed: int | None = None) -> None:
     columns = display_order(columns, console.width)
     longest_call = max([len("test call")] + [len(f"{c.id} {c.subject}") for c in calls])
     budget = console.width - _outcome_columns_width(columns)
     call_width = None if longest_call <= budget else max(8, budget)
-    console.print(_rich_table(calls, columns, cells, call_width))
+    console.print(_rich_table(calls, columns, cells, call_width, observed))
 
 
-def _plain_table(m: mx.Matrix, color: bool) -> str:
+def shown_calls(m: mx.Matrix, focus: bool) -> tuple[mx.CallInfo, ...]:
+    """The rows a view prints: every call, or with --focus only the rows where some cell is not PASSED THROUGH."""
+    return tuple(c for c in m.calls if not focus or not mx.quiet_row(m, c.id))
+
+
+def focus_line(m: mx.Matrix) -> str:
+    """Names what --focus left out, so a shorter table is never read as a shorter drill."""
+    hidden = [c.id for c in m.calls if mx.quiet_row(m, c.id)]
+    if not hidden:
+        return "focus: no rows hidden; every row has a cell that is not PASSED THROUGH"
+    return (f"focus: {len(hidden)} of {len(m.calls)} rows hidden, every cell in them PASSED THROUGH "
+            f"(N/A cells aside): {', '.join(hidden)}")
+
+
+def _plain_table(m: mx.Matrix, color: bool, calls: Sequence[mx.CallInfo] | None = None) -> str:
     width = max(14, *(len(column_title(n)) for n in m.columns)) + 2
     head = "test call".ljust(34) + "".join(column_title(n).ljust(width) for n in m.columns)
     lines = [HEADLINE, OBSERVED.format(n=m.conditions.n_calls), head, "-" * len(head)]
-    for call in m.calls:
+    for call in m.calls if calls is None else calls:
         row = f"{call.id} {call.subject}"[:33].ljust(34)
         for name in m.columns:
             cell = m.cells.get((name, call.id))
@@ -271,17 +289,19 @@ def _footer_lines(m: mx.Matrix) -> list[str]:
     return lines + [SCOPE_NOTE, "Detail: hermes provingground show <CALL> --column <COLUMN>"]
 
 
-def render_terminal(m: mx.Matrix, color: bool = True, width: int = 160) -> str:
+def render_terminal(m: mx.Matrix, color: bool = True, width: int = 160, focus: bool = False) -> str:
+    """The whole matrix; with *focus*, only the rows with an effect, then one line naming the rows left out."""
+    calls, focused = shown_calls(m, focus), [focus_line(m)] if focus else []
     try:
         from rich.console import Console
         from rich.panel import Panel
     except ImportError:
-        return "\n".join(conditions_lines(m) + ["", _plain_table(m, color), ""] + _footer_lines(m))
+        return "\n".join(conditions_lines(m) + ["", _plain_table(m, color, calls), *focused, ""] + _footer_lines(m))
     buffer = io.StringIO()
     console = Console(file=buffer, force_terminal=color, no_color=not color, width=width)
     console.print(Panel("\n".join(conditions_lines(m)), title="drill conditions", expand=False))
-    _print_table(console, m.calls, m.columns, m.cells)
-    for line in _footer_lines(m):
+    _print_table(console, calls, m.columns, m.cells, m.conditions.n_calls if focus else None)
+    for line in focused + _footer_lines(m):
         console.print(line, markup=False, highlight=False)
     return buffer.getvalue()
 
@@ -327,23 +347,31 @@ def _md_escape(text: str) -> str:
     return text.replace("|", "\\|")
 
 
-def render_markdown(m: mx.Matrix) -> str:
+def render_markdown(m: mx.Matrix, focus: bool = False) -> str:
     lines = [f"# {HEADLINE}", "", f"**{OBSERVED.format(n=m.conditions.n_calls)}** {mx.tally(m)}", "",
              "## Drill conditions", *[f"- {line}" for line in conditions_lines(m)], "", "## Matrix", "",
              "| test call | " + " | ".join(column_title(n) for n in m.columns) + " |",
              "|---|" + "---|" * len(m.columns)]
-    for call in m.calls:
+    for call in shown_calls(m, focus):
         cells = [cell_label(m.cells[(n, call.id)]) if (n, call.id) in m.cells else "pending" for n in m.columns]
         lines.append(f"| {call.id} {_md_escape(call.subject)} | " + " | ".join(cells) + " |")
+    lines += ["", focus_line(m)] if focus else []
     lines += ["", "## Findings and attribution", *[f"- {_md_escape(x.lstrip('• '))}" for x in _footer_lines(m)]]
     return "\n".join(lines) + "\n"
 
 
 def _clip(text: str | None) -> list[str]:
+    """At most MAX_DETAIL_LINES lines and MAX_DETAIL_CHARS characters: one long line (a JSON result) is cut too."""
     lines = (text or "").splitlines() or [""]
-    if len(lines) <= MAX_DETAIL_LINES:
-        return lines
-    return lines[:MAX_DETAIL_LINES] + [f"[{len(lines) - MAX_DETAIL_LINES} more lines]"]
+    kept, room = [], MAX_DETAIL_CHARS
+    for line in lines[:MAX_DETAIL_LINES]:
+        if len(line) > room:
+            kept.append(line[:room] + f" [{len(line) - room} more characters]")
+            break
+        kept.append(line)
+        room -= len(line)
+    rest = len(lines) - len(kept)
+    return kept + ([f"[{rest} more lines]"] if rest else [])
 
 
 def _diff(old: str | None, new: str | None, what: str = "delivered") -> list[str]:
@@ -384,6 +412,60 @@ def render_cell_detail(m: mx.Matrix, column: str, call_id: str) -> str:
         out += [f"── {title}", *lines, ""]
     return "\n".join(out)
 
+
+def _changed_label(cell: mx.Cell | None) -> str:
+    return cell_label(cell) if cell is not None else "not in that report"
+
+
+def diff_lines(old: mx.Matrix, new: mx.Matrix, d: mx.MatrixDiff, old_name: str, new_name: str) -> list[str]:
+    """--compare, --since-last and `diff`: only what changed between two reports, then a count."""
+    changes = [*(f"plugin added: {p}" for p in d.plugins_added), *(f"plugin removed: {p}" for p in d.plugins_removed),
+               *(f"test call added: {c}" for c in d.calls_added), *(f"test call removed: {c}" for c in d.calls_removed),
+               *(f"{c.call_id} × {column_title(c.column)}: {_changed_label(c.before)} → {_changed_label(c.after)}"
+                 for c in d.cells),
+               *(f"new finding {f.kind} {f.call_id}: {f.text}" for f in d.findings_new),
+               *(f"finding no longer recorded {f.kind} {f.call_id}: {f.text}" for f in d.findings_resolved)]
+    head = [f"compared {old_name} (drill started {old.conditions.started_at})",
+            f"      to {new_name} (drill started {new.conditions.started_at})"]
+    if not changes:
+        return head + ["no change: same plugins, test calls, cell outcomes and cross-plugin findings"]
+    return head + changes + [f"{_plural(len(changes), 'change')} between the two reports"]
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+CONTRACT_SKIPPED = frozenset({mx.Outcome.NOT_RUN})  # a cell that never ran is not a known-good observation
+
+
+def _yaml_quoted(text: str) -> str:
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _expect_flow(expect: Mapping[str, str]) -> str:
+    """One call's expectations as a YAML flow mapping: {"baseline": [PASSED_THROUGH], "stack": [BLOCKED]}."""
+    return "{" + ", ".join(f"{_yaml_quoted(column)}: [{token}]" for column, token in expect.items()) + "}"
+
+
+def render_contract(m: mx.Matrix) -> str:
+    """--write-contract: an `expect:` file (the --calls format) pinning every built-in cell to the outcome this
+    drill observed, so `--calls FILE --check` on an unchanged stack is met and any change fails it with exit 5."""
+    pinned, left_out = [], []
+    for call in m.calls:
+        cells = [m.cells[(col, call.id)] for col in m.columns if (col, call.id) in m.cells]
+        expect = {c.column: c.primary.value for c in cells if c.primary not in CONTRACT_SKIPPED}
+        if call.provenance != "built-in" or not expect:
+            left_out.append(call.id)
+            continue
+        pinned.append(f"  {call.id}: {_expect_flow(expect)}")
+    header = [f"# expect: contract written by {GENERATOR} from the drill started {m.conditions.started_at}",
+              f"# ({mx.tally(m)}). Each cell expects the outcome that drill observed.",
+              "# Check a stack against it: hermes provingground --calls THIS_FILE --check  (exit 5 when any cell differs)"]
+    if left_out:
+        header.append(f"# not pinned (a user call, or no cell that ran): {', '.join(left_out)}")
+    return "\n".join(header + ["schema: provingground.testcalls.v1", "expect:" + ("" if pinned else " {}"), *pinned]) + "\n"
+
 # File: proving_ground/report.py  (part 3 of 3: self-contained HTML)
 
 CSS = """
@@ -421,6 +503,8 @@ white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.5 ui-monospace,SFMono-
 .add,.del{display:inline-block;min-width:100%}.add{color:var(--changed);background:color-mix(in srgb,var(--changed) 11%,transparent)}
 .del{color:var(--rewrote);background:color-mix(in srgb,var(--rewrote) 11%,transparent)}
 .panel p a{display:inline-block;margin-top:14px;text-decoration:none;font-weight:600}
+#focus{margin:0 6px 0 2px;vertical-align:-1px;accent-color:var(--gated)}#focus+label{font-size:13.5px;color:var(--muted);cursor:pointer}
+#focus:checked~#matrix tr.quiet{display:none}#focus:focus-visible+label{outline:2px solid var(--gated);outline-offset:2px}
 @media (max-width:480px){main{padding:20px 12px 40px}.box{padding:14px}tbody th{min-width:118px}}
 """
 
@@ -455,9 +539,17 @@ def _html_panel(m: mx.Matrix, column: str, call_id: str) -> str:
     return "".join(parts) + '<p><a href="#matrix">← back to the matrix</a></p></section>'
 
 
-def render_html(m: mx.Matrix) -> str:
+def _html_focus_toggle(m: mx.Matrix, focus: bool) -> str:
+    """A checkbox, not a script: CSS hides the quiet rows while it is checked (--focus checks it)."""
+    hidden = sum(mx.quiet_row(m, c.id) for c in m.calls)
+    return (f'<input type="checkbox" id="focus"{" checked" if focus else ""}><label for="focus">show only the rows '
+            f"with a recorded effect ({hidden} of {len(m.calls)} rows are PASSED THROUGH in every cell)</label>")
+
+
+def render_html(m: mx.Matrix, focus: bool = False) -> str:
     head = "".join(f"<th>{html.escape(column_title(n))}</th>" for n in m.columns)
-    rows = "".join(f"<tr><th>{html.escape(c.id)} <span class='muted'>{html.escape(c.subject)}</span></th>"
+    rows = "".join(f"<tr{' class=quiet' if mx.quiet_row(m, c.id) else ''}><th>{html.escape(c.id)} "
+                   f"<span class='muted'>{html.escape(c.subject)}</span></th>"
                    + "".join(_html_cell(m, n, c.id) for n in m.columns) + "</tr>" for c in m.calls)
     panels = "".join(_html_panel(m, col, cid) for (col, cid) in m.cells
                      if col in m.observations and cid in m.observations[col])
@@ -467,7 +559,7 @@ def render_html(m: mx.Matrix) -> str:
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>Proving Ground Report</title>'
             f"<style>{CSS}</style></head><body><main><h1>{html.escape(HEADLINE)}</h1>"
             f"<p class='muted'>{html.escape(OBSERVED.format(n=m.conditions.n_calls))} {html.escape(mx.tally(m))}</p>"
-            f"<div class='box'><strong>Drill conditions</strong><ul>{cond}</ul></div>"
+            f"<div class='box'><strong>Drill conditions</strong><ul>{cond}</ul></div>{_html_focus_toggle(m, focus)}"
             f"<div class='box scroll' id='matrix'><table><thead><tr><th>test call</th>{head}</tr></thead>"
             f"<tbody>{rows}</tbody></table></div><div class='box'><ul>{footer}</ul></div>{panels}"
             f"<p class='muted'>{html.escape(SCOPE_NOTE)}</p></main></body></html>")
