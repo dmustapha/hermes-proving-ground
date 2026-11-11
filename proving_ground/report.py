@@ -78,6 +78,40 @@ def column_title(name: str) -> str:
     return {"baseline": "baseline (no plugins)", "stack": "FULL STACK"}.get(name, _plugin_title(name))
 
 
+def header_title(m: mx.Matrix, name: str) -> str:
+    """A column's header: a solo column that also loads its requires_plugins says so ("<key> (+ deps)")."""
+    title = column_title(name)
+    return f"{title} (+ deps)" if name.startswith("solo:") and len(m.column_plugins.get(name, ())) > 1 else title
+
+
+def header_titles(m: mx.Matrix) -> dict[str, str]:
+    return {name: header_title(m, name) for name in m.columns}
+
+
+def column_hooks(m: mx.Matrix, name: str) -> list[tuple[str, tuple[str, ...]]]:
+    """(plugin, declared hooks) for each plugin loaded in a column, from its manifest's provides_hooks."""
+    return [(key, tuple(m.declared_hooks.get(key, ()))) for key in m.column_plugins.get(name, ())]
+
+
+def hooks_summary(m: mx.Matrix, name: str) -> str:
+    """One compact line under a column header: the hooks its plugins declare (a declaration, not an effect)."""
+    if name == "baseline":
+        return "no plugins"
+    hooks = sorted({h for _key, declared in column_hooks(m, name) for h in declared})
+    return ("hooks: " + ", ".join(hooks)) if hooks else "hooks: none declared"
+
+
+def hooks_legend(m: mx.Matrix) -> list[str]:
+    """`show --plugins`: every tested plugin, its declared hooks, and the plugins each column loaded."""
+    keys = list(dict.fromkeys(k for name in m.columns for k in m.column_plugins.get(name, ())))
+    lines = ["declared hooks (each plugin's plugin.yaml provides_hooks; what it declares, not what it did):"]
+    lines += [f"  {key}: {', '.join(m.declared_hooks.get(key, ())) or 'none declared'}" for key in keys]
+    lines += ["columns (the plugins loaded in each):"]
+    lines += [f"  {header_title(m, name)}: {', '.join(m.column_plugins.get(name, ())) or 'no plugins'}"
+              for name in m.columns]
+    return lines if keys else ["this report records no declared hooks (it predates them, or tested no plugin)"]
+
+
 def short_title(name: str) -> str:
     return {"baseline": "baseline", "stack": "FULL STACK"}.get(name, _plugin_title(name))
 
@@ -140,7 +174,13 @@ def matrix_to_dict(m: mx.Matrix) -> dict[str, Any]:
             "needs_env": list(m.needs_env), "aborted": dict(m.aborted),
             "load_failed": {k: list(v) for k, v in m.load_failed.items()},
             "unreplayable": [[cid, list(r)] for cid, r in m.unreplayable],
-            **({"options": dict(m.options)} if m.options else {})}  # a default drill's report keeps its old keys
+            **({"options": dict(m.options)} if m.options else {}),
+            **({"column_meta": _column_meta(m)} if m.column_plugins else {})}
+
+
+def _column_meta(m: mx.Matrix) -> dict[str, Any]:
+    return {name: {"title": header_title(m, name), "plugins": list(m.column_plugins.get(name, ())),
+                   "declared_hooks": {k: list(h) for k, h in column_hooks(m, name)}} for name in m.columns}  # a default drill's report keeps its old keys
 
 
 def _cell_from(raw: Mapping[str, Any]) -> mx.Cell:
@@ -181,7 +221,14 @@ def matrix_from_dict(data: Mapping[str, Any]) -> mx.Matrix:
                      dict(data.get("aborted") or {}),
                      {k: tuple(v) for k, v in (data.get("load_failed") or {}).items()},
                      tuple((cid, tuple(r)) for cid, r in data.get("unreplayable") or ()),
-                     {str(k): str(v) for k, v in (data.get("options") or {}).items()})
+                     {str(k): str(v) for k, v in (data.get("options") or {}).items()},
+                     *_meta_from(data.get("column_meta") or {}))
+
+
+def _meta_from(meta: Mapping[str, Any]) -> tuple[dict[str, tuple[str, ...]], dict[str, tuple[str, ...]]]:
+    plugins = {str(col): tuple(v.get("plugins") or ()) for col, v in meta.items()}
+    hooks = {str(k): tuple(h) for v in meta.values() for k, h in (v.get("declared_hooks") or {}).items()}
+    return plugins, hooks
 
 # File: proving_ground/report.py  (part 2 of 3: terminal table, Markdown, cell detail)
 
@@ -204,7 +251,7 @@ def conditions_lines(m: mx.Matrix) -> list[str]:
 
 def _rich_table(calls: Sequence[mx.CallInfo], columns: Sequence[str],
                 cells: Mapping[tuple[str, str], mx.Cell], call_width: int | None = None,
-                observed: int | None = None) -> Any:
+                observed: int | None = None, titles: Mapping[str, str] | None = None) -> Any:
     """Outcome labels wrap only at their "(core)" suffix; the call column wraps (to call_width) on narrow terminals.
     *observed* is the drill's call count when --focus prints fewer rows than the drill ran."""
     from rich import box
@@ -215,7 +262,7 @@ def _rich_table(calls: Sequence[mx.CallInfo], columns: Sequence[str],
                   title_style="bold", header_style="bold", pad_edge=False)
     table.add_column("test call", no_wrap=call_width is None, width=call_width)
     for name in columns:
-        table.add_column(column_title(name), min_width=14, overflow="fold")
+        table.add_column((titles or {}).get(name) or column_title(name), min_width=14, overflow="fold")
     for call in calls:
         row = [f"[bold]{call.id}[/] {call.subject}"]
         for name in columns:
@@ -225,27 +272,28 @@ def _rich_table(calls: Sequence[mx.CallInfo], columns: Sequence[str],
     return table
 
 
-def _outcome_columns_width(columns: Sequence[str]) -> int:
+def _outcome_columns_width(columns: Sequence[str], titles: Mapping[str, str] | None = None) -> int:
     """Width the outcome columns need without splitting a word (rich's Measurement ignores min_width)."""
-    words = [max([14] + [len(word) for word in column_title(n).split()]) for n in columns]
+    words = [max([14] + [len(word) for word in ((titles or {}).get(n) or column_title(n)).split()]) for n in columns]
     return sum(words) + 3 * len(columns) + 2  # 2 padding + 1 separator per column, 2 edge characters
 
 
-def display_order(columns: Sequence[str], width: int) -> list[str]:
+def display_order(columns: Sequence[str], width: int, titles: Mapping[str, str] | None = None) -> list[str]:
     """When every column cannot fit, FULL STACK moves next to the baseline so the column the report exists for
     is never the one cropped; the solos follow."""
-    if "stack" not in columns or _outcome_columns_width(columns) <= width - 24:
+    if "stack" not in columns or _outcome_columns_width(columns, titles) <= width - 24:
         return list(columns)
     return [c for c in columns if c == "baseline"] + ["stack"] + [c for c in columns if c not in ("baseline", "stack")]
 
 
 def _print_table(console: Any, calls: Sequence[mx.CallInfo], columns: Sequence[str],
-                 cells: Mapping[tuple[str, str], mx.Cell], observed: int | None = None) -> None:
-    columns = display_order(columns, console.width)
+                 cells: Mapping[tuple[str, str], mx.Cell], observed: int | None = None,
+                 titles: Mapping[str, str] | None = None) -> None:
+    columns = display_order(columns, console.width, titles)
     longest_call = max([len("test call")] + [len(f"{c.id} {c.subject}") for c in calls])
-    budget = console.width - _outcome_columns_width(columns)
+    budget = console.width - _outcome_columns_width(columns, titles)
     call_width = None if longest_call <= budget else max(8, budget)
-    console.print(_rich_table(calls, columns, cells, call_width, observed))
+    console.print(_rich_table(calls, columns, cells, call_width, observed, titles))
 
 
 def shown_calls(m: mx.Matrix, focus: bool) -> tuple[mx.CallInfo, ...]:
@@ -263,8 +311,9 @@ def focus_line(m: mx.Matrix) -> str:
 
 
 def _plain_table(m: mx.Matrix, color: bool, calls: Sequence[mx.CallInfo] | None = None) -> str:
-    width = max(14, *(len(column_title(n)) for n in m.columns)) + 2
-    head = "test call".ljust(34) + "".join(column_title(n).ljust(width) for n in m.columns)
+    titles = header_titles(m)
+    width = max(14, *(len(titles[n]) for n in m.columns)) + 2
+    head = "test call".ljust(34) + "".join(titles[n].ljust(width) for n in m.columns)
     lines = [HEADLINE, OBSERVED.format(n=m.conditions.n_calls), head, "-" * len(head)]
     for call in m.calls if calls is None else calls:
         row = f"{call.id} {call.subject}"[:33].ljust(34)
@@ -313,7 +362,7 @@ def render_terminal(m: mx.Matrix, color: bool = True, width: int = 160, focus: b
     buffer = io.StringIO()
     console = Console(file=buffer, force_terminal=color, no_color=not color, width=width)
     console.print(Panel("\n".join(conditions_lines(m)), title="drill conditions", expand=False))
-    _print_table(console, calls, m.columns, m.cells, m.conditions.n_calls if focus else None)
+    _print_table(console, calls, m.columns, m.cells, m.conditions.n_calls if focus else None, header_titles(m))
     for line in focused + _footer_lines(m):
         console.print(line, markup=False, highlight=False)
     return buffer.getvalue()
@@ -363,7 +412,7 @@ def _md_escape(text: str) -> str:
 def render_markdown(m: mx.Matrix, focus: bool = False) -> str:
     lines = [f"# {HEADLINE}", "", f"**{OBSERVED.format(n=m.conditions.n_calls)}** {mx.tally(m)}", "",
              "## Drill conditions", *[f"- {line}" for line in conditions_lines(m)], "", "## Matrix", "",
-             "| test call | " + " | ".join(column_title(n) for n in m.columns) + " |",
+             "| test call | " + " | ".join(header_title(m, n) for n in m.columns) + " |",
              "|---|" + "---|" * len(m.columns)]
     for call in shown_calls(m, focus):
         cells = [cell_label(m.cells[(n, call.id)]) if (n, call.id) in m.cells else "pending" for n in m.columns]
@@ -528,6 +577,7 @@ main>div:first-of-type{font-size:13.5px}.scroll{overflow-x:auto;padding:6px 8px}
 table{border-collapse:separate;border-spacing:0;width:100%}th,td{border-bottom:1px solid var(--line);padding:9px 10px;
 text-align:left;white-space:nowrap;vertical-align:top}tbody tr:last-child>*{border-bottom:0}
 thead th{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+thead th .hooks{display:block;font:400 11px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:none;letter-spacing:0;white-space:normal;max-width:190px}
 tbody th{font-weight:600;white-space:normal;min-width:150px}tbody th .muted{display:block;font-weight:400;font-size:13px}
 th:first-child{position:sticky;left:0;z-index:1;background:var(--card)}
 td a{display:inline-block;text-decoration:none;font:600 12px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -590,8 +640,17 @@ def _html_focus_toggle(m: mx.Matrix, focus: bool) -> str:
             f"with a recorded effect ({hidden} of {len(m.calls)} rows are PASSED THROUGH in every cell)</label>")
 
 
+def _html_header(m: mx.Matrix, name: str) -> str:
+    """The column title, the hooks its plugins declare in a hover title, and a compact line under the title."""
+    if not m.column_plugins:  # a report from before declared hooks were recorded
+        return f"<th>{html.escape(header_title(m, name))}</th>"
+    full = "; ".join(f"{k}: {', '.join(h) or 'none declared'}" for k, h in column_hooks(m, name)) or "no plugins"
+    return (f"<th title='{html.escape(f'declared hooks: {full}', quote=True)}'>{html.escape(header_title(m, name))}"
+            f"<br><span class='hooks'>{html.escape(hooks_summary(m, name))}</span></th>")
+
+
 def render_html(m: mx.Matrix, focus: bool = False) -> str:
-    head = "".join(f"<th>{html.escape(column_title(n))}</th>" for n in m.columns)
+    head = "".join(_html_header(m, n) for n in m.columns)
     rows = "".join(f"<tr{' class=quiet' if mx.quiet_row(m, c.id) else ''}><th>{html.escape(c.id)} "
                    f"<span class='muted'>{html.escape(c.subject)}</span></th>"
                    + "".join(_html_cell(m, n, c.id) for n in m.columns) + "</tr>" for c in m.calls)

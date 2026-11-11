@@ -914,6 +914,12 @@ class DrillRun:
     pair_note: str = ""
     repeats: dict[str, list[matrix.ColumnRun]] = field(default_factory=dict)  # --repeat: extra runs per solo column
     repeat: int = 1  # --repeat N as asked
+    declared_hooks: dict[str, tuple[str, ...]] = field(default_factory=dict)  # plugin -> its manifest's provides_hooks
+
+
+def declared_hooks(path: Path) -> tuple[str, ...]:
+    """What a plugin's manifest says it hooks (provides_hooks); a declaration, never proof of what it did."""
+    return tuple(str(h) for h in _listed(_manifest(path), "provides_hooks") if isinstance(h, str) and h)
 
 
 def run_drill(subjects: Sequence[PluginSource], templates: Sequence[testcalls.CallTemplate],
@@ -924,6 +930,7 @@ def run_drill(subjects: Sequence[PluginSource], templates: Sequence[testcalls.Ca
     subjects = load_order(subjects)
     columns, order = plan_columns(subjects), tuple(s.key for s in subjects if not s.needs_env)
     notes: list[str] = []
+    hooks = {s.key: declared_hooks(s.path) for s in subjects}
     with Recorder() as recorder:
         def work(spec: ColumnSpec) -> CellRun:
             run = run_column_reliably(spec, templates, canary, recorder, settings)
@@ -934,7 +941,7 @@ def run_drill(subjects: Sequence[PluginSource], templates: Sequence[testcalls.Ca
         notify(baseline)
         if baseline.abort_reason:  # a broken harness must not run every other column against a non-scripted child
             return DrillRun([baseline], None, {}, list(skipped), [s.key for s in subjects if s.needs_env], canary,
-                            time.monotonic() - started, order)
+                            time.monotonic() - started, order, declared_hooks=hooks)
         repeat_and_rest = [ColumnSpec("baseline-repeat", ())] + columns[1:]
 
         def done(run: CellRun) -> None:
@@ -948,7 +955,7 @@ def run_drill(subjects: Sequence[PluginSource], templates: Sequence[testcalls.Ca
         repeats = _run_repeats(view, columns, work, settings) if settings.repeat > 1 else {}
     return DrillRun([baseline] + results[1:] + pair_runs, results[0], crosscheck, list(skipped),
                     [s.key for s in subjects if s.needs_env], canary, time.monotonic() - started, order, refused,
-                    tuple(sorted(set(notes))), pair_total, pair_note, repeats, settings.repeat)
+                    tuple(sorted(set(notes))), pair_total, pair_note, repeats, settings.repeat, hooks)
 
 
 def _pair_spec(a: PluginSource, b: PluginSource, runnable: Sequence[PluginSource]) -> ColumnSpec:

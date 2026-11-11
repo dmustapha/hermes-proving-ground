@@ -216,7 +216,10 @@ def assemble(drill: runner.DrillRun, infos: Sequence[matrix.CallInfo], version: 
                             drill.wall_s, drill.skipped, drill.needs_env, load_order=drill.load_order,
                             unreplayable=drill.unreplayable, conditions_extra=extra, repeats=drill.repeats,
                             pair_total=drill.pair_total)
-    return replace(m, options=drill_options(drill, infos, m))
+    plugins = {c.name: c.plugins for c in drill.columns if c.name in m.columns}
+    plugins.update({f"solo:{k}": (k,) for k in drill.needs_env})
+    return replace(m, options=drill_options(drill, infos, m), column_plugins=plugins,
+                   declared_hooks=dict(drill.declared_hooks))
 
 
 def planned_columns(subjects: Sequence[runner.PluginSource]) -> tuple[str, ...]:
@@ -507,6 +510,9 @@ def cmd_show(args: argparse.Namespace) -> int:
     if failure:
         print(failure + "\nthe report below is from the previous successful drill")
     m = load_latest()
+    if getattr(args, "plugins", False):
+        print("\n".join(report.hooks_legend(m)))
+        return 0
     written = write_exports(m, args)
     for path in written:
         print(f"wrote {path}")
@@ -583,7 +589,8 @@ def cmd_diff(args: argparse.Namespace) -> int:
 USAGE_EPILOG = """actions:
   run    (default) drill the directory plugins enabled in your Hermes home, or the demo stack with --fixtures
   show   the cells with an effect in the latest saved report; `show TC04 --column stack` prints one cell;
-         `show --html PATH` (or --json / --markdown / --write-contract) exports the saved report again
+         `show --html PATH` (or --json / --markdown / --write-contract) exports the saved report again;
+         `show --plugins` lists each plugin's declared hooks (plugin.yaml provides_hooks) and each column's plugins
   diff   `diff A.json B.json` prints only what changed between two saved reports (no drill)
   warm   prepare the isolated Hermes runtime once (network); `warm --check` only reports whether it is ready;
          `warm --from ~/.hermes/installs` copies it from your Hermes install instead (no network, source only read)
@@ -642,6 +649,8 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
                            help="use the bundled three-plugin demo stack; `--fixtures extended` adds the fourth demo "
                                 "plugin under fixtures/extended (put action words like `show` before this flag)")
     subparser.add_argument("--without", action="append", metavar="PLUGIN", help="leave a plugin out (repeatable)")
+    subparser.add_argument("--plugins", action="store_true",
+                           help="show: list each tested plugin's declared hooks and the plugins in each column")
     subparser.add_argument("--only", action="append", metavar="CALL", help="run only these test calls (repeatable)")
     subparser.add_argument("--calls", default=None, metavar="FILE",
                            help="extra test calls (ids U…) and expect: contracts, same validator and grammar")

@@ -164,6 +164,8 @@ class Matrix:
     load_failed: Mapping[str, Sequence[str]] = field(default_factory=dict)
     unreplayable: tuple[tuple[str, tuple[str, ...]], ...] = ()
     options: Mapping[str, str] = field(default_factory=dict)  # opt-in drill options (wires, pairs, repeat): name -> note
+    column_plugins: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # column -> plugins loaded in it
+    declared_hooks: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # plugin -> manifest provides_hooks
 
     def cell(self, column: str, call_id: str) -> Cell:
         return self.cells[(column, call_id)]
