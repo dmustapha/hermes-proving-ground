@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ROW = re.compile(r"^\|\s*(CL-\d+[a-z]?)\s*\|\s*(.+?)\s*\|\s*(test|grep|absent|report)\s*\|\s*(.+?)\s*\|\s*$")
 SHIPPED = ["__init__.py", "proving_ground", "fixtures"]
 HERMES_TESTS = ("test_escape_abort", "test_home_untouched", "test_cleanup.py::test_signal", "test_drill_fixtures_e2e",
-                "test_golden_fixture_matrix")
+                "test_golden_fixture_matrix", "test_options_e2e", "test_seed.py::test_real")
 COMMITTED_REPORT = ROOT / "docs" / "fixture-report.json"
 OK, SKIP, FAIL = "ok", "SKIP", "FAIL"
 
