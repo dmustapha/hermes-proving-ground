@@ -115,3 +115,11 @@
 | CL-100b | `--attended` refuses under YOLO or approvals off and spawns nothing. | test | tests/test_attended.py::test_cli_refuses_yolo_and_approvals_off_on_a_tty |
 | CL-100c | The `/provingground` slash command refuses `attended`. | test | tests/test_attended.py::test_slash_command_refuses_attended |
 | CL-101 | The attended child keeps approvals manual and the unattended modes on deny, with a 60 s prompt and no bypass flag. | test | tests/test_attended.py::test_attended_child_config_keeps_manual_and_deny_with_a_60_s_prompt |
+| CL-102 | A `--calls` or cross-check call may carry only the argument names its tool needs, so `background: true` or any unknown key is refused. | test | tests/test_stress_hardening.py::test_terminal_call_with_an_extra_argument_name_is_refused |
+| CL-102b | Derived calls cannot blow up their output: printf `%n` or a width over 9999, and seq over 20000 lines, are refused. | test | tests/test_stress_hardening.py::test_output_blowups_are_refused |
+| CL-102c | A `--calls` file that is not UTF-8, larger than 256 KB, or holds a YAML alias bomb is refused as BAD_CALLS_FILE. | test | tests/test_stress_hardening.py::test_a_non_utf8_calls_file_is_bad_calls_file_not_a_crash |
+| CL-102d | `chmod` in a derived call cannot set setuid, setgid or sticky bits, lock the owner out, or target the sandbox root. | test | tests/test_stress_hardening.py::test_chmod_special_bits_owner_lockout_and_the_sandbox_root_are_refused |
+| CL-102e | An option used outside the actions it belongs to exits 2 with BAD_OPTION instead of being ignored. | test | tests/test_stress_hardening.py::test_a_flag_outside_its_action_exits_2_with_a_message |
+| CL-102f | Export paths are checked before the drill starts. | test | tests/test_stress_hardening.py::test_an_export_path_that_is_a_directory_is_refused_before_the_drill |
+| CL-102g | `sweep` stops a hard-killed drill's leftover processes (matched on the exact HERMES_HOME of the root) before removing the root, including a root such a process recreated without its marker. | test | tests/test_stress_hardening.py::test_sweep_removes_a_root_a_live_daemon_recreated_without_its_marker |
+| CL-102h | Only `approvals.mode: off` turns approvals off; other unknown values read as manual, as in Hermes. | test | tests/test_stress_hardening.py::test_unknown_approval_modes_read_as_manual_like_hermes |

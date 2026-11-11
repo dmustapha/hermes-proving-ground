@@ -5,7 +5,7 @@
 # and from middleware REQUEST_REWRITTEN, MODEL_REPLY_CHANGED, EXECUTION_REPLACED.
 # User call ids start with U. A terminal command must pass the closed grammar: single-space separated words,
 # `echo` or `printf` whose first argument is not a flag, `seq` with no flags, `curl -q` to the run's recorder, or
-# `chmod` with an octal mode on sandbox paths; no pipes, `;`, `&`, `$` or `..` (see `hermes provingground --help`).
+# `chmod` with a 3-digit octal mode on sandbox paths; no pipes, `;`, `&`, `$` or `..` (see `hermes provingground --help`).
 # Words after echo's first argument are printed, never run, so a call can carry the exact shape your guard matches,
 # flags included (U03). PROVING GROUND's own CI runs this exact file with the demo guard fx_guard as the author's
 # plugin.
