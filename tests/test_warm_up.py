@@ -144,3 +144,11 @@ def seed_module():
     from proving_ground import seed
 
     return seed
+
+
+def test_a_slow_warm_up_prints_a_heartbeat(monkeypatch, capsys) -> None:
+    import time
+    monkeypatch.setattr(cli, "HEARTBEAT_S", 0.02)
+    monkeypatch.setattr(runner, "warm_up", lambda settings: time.sleep(0.15) or "run")
+    assert cli.warm_up_with_heartbeat(None) == "run"
+    assert "still preparing the runtime" in capsys.readouterr().err

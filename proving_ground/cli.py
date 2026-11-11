@@ -193,6 +193,25 @@ def warm_from_local(settings: runner.RunnerSettings) -> bool:
     return runner.is_warm(settings)
 
 
+HEARTBEAT_S = 30.0
+
+
+def warm_up_with_heartbeat(settings: runner.RunnerSettings) -> runner.CellRun:
+    """runner.warm_up, printing a line to stderr every HEARTBEAT_S so a slow download is not silent."""
+    import time
+    done, start = threading.Event(), time.monotonic()
+
+    def beat() -> None:
+        while not done.wait(HEARTBEAT_S):
+            print(f"still preparing the runtime, {time.monotonic() - start:.0f} s "
+                  f"(a failed download starts over; rerun `hermes provingground warm`)", file=sys.stderr, flush=True)
+    threading.Thread(target=beat, name="pg-warm-heartbeat", daemon=True).start()
+    try:
+        return runner.warm_up(settings)
+    finally:
+        done.set()
+
+
 def ensure_warm(settings: runner.RunnerSettings, allow_download: bool = True) -> None:
     """Warm the runtime cache once: from your local Hermes installs when they exist (no network), else by
     Hermes's own installer (announced in one line). A warm-up that fails is a clean refusal, never a drill against
@@ -203,7 +222,7 @@ def ensure_warm(settings: runner.RunnerSettings, allow_download: bool = True) ->
         code, _, message = WARM_UP_NEEDED.partition(": ")
         raise safety.Refusal(code, message)
     print(runner.WARM_NOTICE.format(cache=settings.warm_cache), file=sys.stderr, flush=True)
-    run = runner.warm_up(settings)
+    run = warm_up_with_heartbeat(settings)
     if not runner.is_warm(settings):
         raise runner.warm_failure(run)
 
@@ -628,7 +647,7 @@ def cmd_warm(args: argparse.Namespace) -> int:
         return 0
     print(runner.WARM_DISCLOSURE.format(cache=settings.warm_cache), flush=True)
     runner.install_cancellation()
-    run = runner.warm_up(settings)
+    run = warm_up_with_heartbeat(settings)
     if not runner.is_warm(settings):
         raise runner.warm_failure(run)
     print("ready")
