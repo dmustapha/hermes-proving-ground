@@ -67,3 +67,8 @@ def test_live_view_is_transient_so_the_table_prints_once(monkeypatch) -> None:
     monkeypatch.setattr(rich.console, "Console", lambda *a, **k: real_console(file=sink, force_terminal=False))
     assert cli._live_run(argparse.Namespace(no_color=True))[0] is m
     assert "LIVE-FRAME" not in sink.getvalue()
+
+
+def test_solo_cell_detail_labels_attribution_as_the_full_stack_one() -> None:
+    titles = [title for title, _ in report.detail_sections(fixture_like_matrix(), "solo:fx_trimmer", "TC02")]
+    assert any(t.startswith("full-stack attribution for TC02") for t in titles)

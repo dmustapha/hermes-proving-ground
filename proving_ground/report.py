@@ -315,7 +315,8 @@ def detail_sections(m: mx.Matrix, column: str, call_id: str) -> list[tuple[str, 
     info = next(c for c in m.calls if c.id == call_id)
     return [("cell", [f"{call_id} × {column_title(column)}: {cell_label(cell)}",
                       f"provenance: {provenance(column)} column · call {info.provenance}", info.purpose, cell.note]),
-            ("attribution (observed in one solo run per plugin, against the zero-plugin baseline)",
+            (f"full-stack attribution for {call_id} (observed in one solo run per plugin, against the zero-plugin "
+             "baseline)",
              _attribution_for(m, call_id)),
             ("args as sent by PROVING GROUND (from the plan)", [str(dict(obs.injected_args))]),
             (f"args that actually ran (after every plugin) · {QUOTE_TITLE}", quoted([str(dict(obs.final_args))])),
