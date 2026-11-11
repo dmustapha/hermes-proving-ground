@@ -485,6 +485,14 @@ def coverage_line(columns: Sequence[ColumnRun], needs_env: Sequence[str], skippe
             + (f" ({', '.join(failed)})" if failed else ""))
 
 
+def model_line(steps: int, n_calls: int) -> str:
+    """No scripted step with calls planned means no drill turn ran: say so instead of implying a scripted run."""
+    if steps == 0 and n_calls:
+        return ("NOT CALLED, and no scripted turn ran (0 llm_execution steps answered by PROVING GROUND); "
+                "the only model endpoint was the closed loopback port")
+    return f"NOT CALLED (scripted turn: {steps} llm_execution steps answered by PROVING GROUND, 0 provider calls)"
+
+
 def build_matrix(columns: Sequence[ColumnRun], baseline_repeat: ColumnRun | None,
                  crosscheck: Mapping[str, ColumnRun], calls: Sequence[CallInfo], hermes_version: str,
                  started_at: str, wall_s: float, skipped: Sequence[tuple[str, str]] = (),
@@ -510,8 +518,7 @@ def build_matrix(columns: Sequence[ColumnRun], baseline_repeat: ColumnRun | None
     findings += _escapes(list(columns) + list(crosscheck.values()))
     connects = [c for col in list(columns) + list(crosscheck.values()) for c in col.connects]
     steps = sum(c.scripted_steps for c in list(columns) + list(crosscheck.values()))
-    extra = {"model": f"NOT CALLED (scripted turn: {steps} llm_execution steps answered by PROVING GROUND, "
-                      "0 provider calls)", "coverage": coverage_line(columns, needs_env, skipped),
+    extra = {"model": model_line(steps, len(calls)), "coverage": coverage_line(columns, needs_env, skipped),
              "order_note": order_note(list(columns) + list(crosscheck.values())),
              **dict(conditions_extra or {})}
     conditions = DrillConditions(hermes_version, len(calls), len(solos), order, len(connects),
