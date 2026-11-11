@@ -26,3 +26,7 @@ BUILD-RESULTS.md
 .feature-coverage.json
 PERSPECTIVE-*
 .forge-critical-review.json
+.debug-state.json
+DEBUG-REPORT.md
+DEBUG-RESULTS.md
+debug-results/
