@@ -528,7 +528,7 @@ def print_comparison(old: matrix.Matrix, old_name: str, new: matrix.Matrix, new_
     return CHANGED_EXIT if diff.changed else 0
 
 
-def refuse_unattended_terminal(args: argparse.Namespace) -> list[testcalls.CallTemplate]:
+def check_attended_posture(args: argparse.Namespace) -> list[testcalls.CallTemplate]:
     """--attended: every refusal runs before anything is spawned; returns the calls Hermes will ask about."""
     attended.check_attended(os.environ, sys.stdin, sys.stdout)
     check_live_posture(user_config(), None)
@@ -547,7 +547,7 @@ def run_attended_column(args: argparse.Namespace, asked: Sequence[testcalls.Call
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    asked = refuse_unattended_terminal(args) if getattr(args, "attended", False) else None
+    asked = check_attended_posture(args) if getattr(args, "attended", False) else None
     runner.install_cancellation()  # SIGINT, SIGTERM, SIGHUP: stop queued columns, kill every child
     earlier = earlier_report(args)
     m, note = _live_run(args) if not args.quiet else run_matrix(args)
