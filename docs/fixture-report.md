@@ -14,7 +14,7 @@
 - load order given to the child (requires_plugins first, then alphabetical): fx_guard, fx_rewriter, fx_trimmer
 - coverage: executed: 3 · unavailable (requires_env): 0 · dependency-skipped / not a directory plugin: 0 · load-failed: 0
 - cleanup: 0 drill processes, 0 drill roots left after the run
-- wall time: 21.6s · started 2026-11-11T06:32:41+00:00
+- wall time: 28.9s · started 2026-11-11T09:45:36+00:00
 
 ## Matrix
 

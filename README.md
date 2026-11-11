@@ -5,6 +5,8 @@ PROVING GROUND sends ten known, harmless test calls through the Hermes plugins y
 
 **A guard never saw the command that actually ran.** That is what the bundled demo drill shows. Hermes merges every `pre_tool_call` rewrite after all the checks have already looked at the original arguments, so a guard and a rewriter that each behave correctly on their own can still let through a call the guard would have stopped. You cannot see this from inside one plugin; the matrix shows it in one cell.
 
+Explore a real report without installing: https://dmustapha.github.io/hermes-proving-ground/fixture-report.html (the fixture drill at 8a7cf74).
+
 ![PROVING GROUND: the fixture matrix, ten test calls by five columns](docs/banner.png)
 
 ## Quickstart
@@ -28,7 +30,7 @@ The warm-up takes about a minute on a fast connection and is allowed up to 15 mi
 > - **Rule 12 (spawned children).** The child is a single-query `hermes chat -q`, but its config forces approvals to manual with single-query, cron and unattended modes all on deny, it never gets `--yolo`/`-z`/`--oneshot` or `HERMES_YOLO_MODE`, and the only commands it runs are the listed calls in `testcalls.yaml` (plus your own `--calls`, which must pass a closed grammar). Anything approval-worthy is denied by Hermes itself.
 
 ## The fixture drill
-The committed report [docs/fixture-report.md](docs/fixture-report.md) (JSON: [docs/fixture-report.json](docs/fixture-report.json), HTML: [docs/fixture-report.html](docs/fixture-report.html)) is one run of `hermes provingground --fixtures` on Hermes v0.23.1, run 2026-11-11: `10 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding`, `model: NOT CALLED (scripted turn: 61 llm_execution steps answered by PROVING GROUND, 0 provider calls)`, 21.6 s on a warm cache. The three demo plugins are the author's own fixtures (`fixtures/`), written to show one Hermes merge rule each.
+The committed report [docs/fixture-report.md](docs/fixture-report.md) (JSON: [docs/fixture-report.json](docs/fixture-report.json), HTML: [docs/fixture-report.html](docs/fixture-report.html)) is one run of `hermes provingground --fixtures` at commit 8a7cf74 on Hermes v0.23.1, run 2026-11-11: `10 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding`, `model: NOT CALLED (scripted turn: 61 llm_execution steps answered by PROVING GROUND, 0 provider calls)`, 28.9 s on a warm cache (measured while the build machine was busy with other work; an earlier committed run took 21.6 s). The three demo plugins are the author's own fixtures (`fixtures/`), written to show one Hermes merge rule each.
 
 ![The fixture matrix in the terminal](docs/matrix.png)
 
