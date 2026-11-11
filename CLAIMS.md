@@ -109,3 +109,9 @@
 | CL-95 | The four block-only probes (TC21-TC24) never run in any column: PROVING GROUND blocks each one, without aborting the drill. | test | tests/test_coverage_calls_e2e.py::test_no_probe_ran_in_any_column |
 | CL-96 | A subject plugin's block on a probe shows as BLOCKED even when its key sorts after proving-ground, because PROVING GROUND's copy loads last. | test | tests/test_coverage_calls_e2e.py::test_a_guard_keyed_after_proving_ground_still_blocks_a_probe |
 | CL-97 | A pre_verify nudge that keeps the turn going shows as TURN EXTENDED on the file edits it followed and is attributed to its plugin. | test | tests/test_coverage_calls_e2e.py::test_a_pre_verify_nudge_is_turn_extended_on_the_edits_and_attributed |
+| CL-98 | With `--attended`, Hermes shows its own approval prompt in a terminal and the person answers: approve, deny and a 60 s timeout are each recorded as that answer. | test | tests/test_attended.py::test_pty_hermes_asks_and_the_human_answers |
+| CL-99 | In attended mode PROVING GROUND writes nothing of its own to the child's terminal; it only relays the user's keystrokes. | test | tests/test_attended.py::test_the_only_write_to_the_child_carries_the_users_own_keystrokes |
+| CL-100 | `--attended` refuses without a terminal, on a messaging platform, and in gateway, cron or single-query sessions. | test | tests/test_attended.py::test_attended_refusals |
+| CL-100b | `--attended` refuses under YOLO or approvals off and spawns nothing. | test | tests/test_attended.py::test_cli_refuses_yolo_and_approvals_off_on_a_tty |
+| CL-100c | The `/provingground` slash command refuses `attended`. | test | tests/test_attended.py::test_slash_command_refuses_attended |
+| CL-101 | The attended child keeps approvals manual and the unattended modes on deny, with a 60 s prompt and no bypass flag. | test | tests/test_attended.py::test_attended_child_config_keeps_manual_and_deny_with_a_60_s_prompt |

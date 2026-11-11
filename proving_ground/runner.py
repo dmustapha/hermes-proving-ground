@@ -160,14 +160,16 @@ class Recorder:
 # host-wide fallbacks. Assumption: a JSON flow mapping under plugins.entries parses (fixtures have no entries).
 
 
-def render_child_config(plugin_keys: Sequence[str], entries: Mapping[str, Any], sandbox: Path) -> str:
+def render_child_config(plugin_keys: Sequence[str], entries: Mapping[str, Any], sandbox: Path,
+                        approval_timeout: int = 5) -> str:
+    """approval_timeout: 5 s headless (every approval is denied at once); --attended uses Hermes's own prompt."""
     lines = ["plugins:", "  enabled:"]
     lines += [f"    - {json.dumps(key)}" for key in plugin_keys]
     if entries:
         lines.append(f"  entries: {json.dumps(entries, sort_keys=True)}")
     lines += ["model:", '  provider: "custom"', f"  base_url: {json.dumps(DEAD_PROVIDER_URL)}",
               f"  default: {json.dumps(safety.SCRIPTED_MODEL)}"]
-    lines += ["approvals:", '  mode: "manual"', "  timeout: 5", '  cron_mode: "deny"',
+    lines += ["approvals:", '  mode: "manual"', f"  timeout: {int(approval_timeout)}", '  cron_mode: "deny"',
               '  single_query_mode: "deny"', '  unattended_mode: "deny"',
               "terminal:", '  backend: "local"', f"  cwd: {json.dumps(str(sandbox))}"]
     return "\n".join(lines) + "\n"
