@@ -103,7 +103,8 @@ def _copy_installs(installs: list[Path], cache: Path) -> int:
     try:
         for install in installs:
             shutil.copytree(install, staging / install.name, symlinks=True, ignore=_ignore_leases)
-            rewritten += _rewrite_paths(staging / install.name, str(install.resolve()), str(cache / install.name))
+            for old in dict.fromkeys((str(install.resolve()), str(install.absolute()))):  # either spelling
+                rewritten += _rewrite_paths(staging / install.name, old, str(cache / install.name))
         for install in installs:
             os.rename(staging / install.name, cache / install.name)
     finally:
@@ -131,10 +132,10 @@ def seed_cache(settings: runner.RunnerSettings, source: Path,
     if any(settings.warm_cache.iterdir()):
         raise safety.Refusal("SEED_CONFLICT", f"the runtime cache {settings.warm_cache} already has contents but is "
                              "not marked ready; remove that directory and rerun.")
-    rewritten = _copy_installs(installs, settings.warm_cache)
     try:
+        rewritten = _copy_installs(installs, settings.warm_cache)
         version = validate(settings)
-    except BaseException:
+    except BaseException:  # a copy that failed half-way or does not start: remove what this call put in the cache
         for install in installs:
             shutil.rmtree(settings.warm_cache / install.name, ignore_errors=True)
         raise

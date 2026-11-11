@@ -81,6 +81,26 @@ def test_a_copy_that_does_not_start_is_removed_and_the_cache_stays_cold(tmp_path
     assert not runner.is_warm(settings) and list(settings.warm_cache.iterdir()) == []
 
 
+def test_a_copy_that_fails_half_way_leaves_nothing_in_the_cache(tmp_path: Path, monkeypatch) -> None:
+    source = make_source(tmp_path / "src")
+    second = source / "d00000000000000b"
+    shutil.copytree(source / INSTALL, second, symlinks=True)
+    settings = settings_in(tmp_path / "base")
+    real_rename, moved = os.rename, []
+
+    def rename_once(src, dst):
+        if moved:
+            raise OSError("disk full")
+        moved.append(dst)
+        real_rename(src, dst)
+
+    monkeypatch.setattr(seed.os, "rename", rename_once)
+    with pytest.raises(OSError):
+        seed.seed_cache(settings, source, validate=ok)
+    assert moved and list(settings.warm_cache.iterdir()) == [] and not runner.is_warm(settings)
+    assert not list(settings.warm_cache.parent.glob("provingground-seed-*"))
+
+
 def test_validation_runs_hermes_version_and_reads_a_failure(tmp_path: Path, monkeypatch) -> None:
     settings = settings_in(tmp_path)
     seen: list[list[str]] = []
