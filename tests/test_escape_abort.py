@@ -19,6 +19,7 @@ def test_rewrite_outside_sandbox_is_escaped_and_stops(settings, tmp_path, tmp_pa
     shutil.copytree(DATA / "fx_escaper", plugin)
     (plugin / "outside_path.txt").write_text(str(outside), encoding="utf-8")
     templates = testcalls.load_templates()
+    others = set(Path(settings.temp_base).glob("provingground-*/home"))  # a concurrent drill's roots are not ours
     with runner.Recorder() as recorder:
         run = runner.run_column(runner.ColumnSpec("solo:fx_escaper", (runner.PluginSource("fx_escaper", plugin),)),
                                 templates, testcalls.make_canary(), recorder, settings)
@@ -27,4 +28,4 @@ def test_rewrite_outside_sandbox_is_escaped_and_stops(settings, tmp_path, tmp_pa
     assert column.observations["TC01"].escaped_reasons
     later = [cid for cid, obs in column.observations.items() if cid != "TC01"]
     assert all(not column.observations[cid].ran for cid in later)
-    assert not list(Path(settings.temp_base).glob("provingground-*/home"))
+    assert set(Path(settings.temp_base).glob("provingground-*/home")) <= others  # this column's root is gone
