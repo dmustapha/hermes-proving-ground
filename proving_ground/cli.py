@@ -19,7 +19,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from . import matrix, report, runner, safety, testcalls
+from . import matrix, report, runner, safety, seed, testcalls
 
 PG_SOURCE = Path(__file__).resolve().parent.parent
 REPORTS_SUBDIR = "reports"
@@ -443,6 +443,8 @@ def cmd_warm(args: argparse.Namespace) -> int:
         return 0 if warm else 3
     check_live_posture(user_config(), None)  # warm spawns a child too: same refusals as run
     settings = build_settings(args)
+    if getattr(args, "warm_from", None):
+        return warm_from(settings, Path(args.warm_from))
     print(runner.WARM_DISCLOSURE.format(cache=settings.warm_cache), flush=True)
     runner.install_cancellation()
     run = runner.warm_up(settings)
@@ -450,6 +452,30 @@ def cmd_warm(args: argparse.Namespace) -> int:
         raise runner.warm_failure(run)
     print("ready")
     return 0
+
+
+def warm_from(settings: runner.RunnerSettings, source: Path) -> int:
+    """Offline warm-up: copy an existing Hermes installs dir into the private cache (the source is only read)."""
+    if runner.is_warm(settings):
+        print(f"warm: runtime cache {settings.warm_cache} is already ready; nothing copied")
+        return 0
+    print(seed.SEED_DISCLOSURE.format(source=source, cache=settings.warm_cache), flush=True)
+    runner.install_cancellation()
+    result = seed.seed_cache(settings, source)
+    print(f"copied {len(result.installs)} install(s) ({', '.join(result.installs)}); {result.rewritten} record(s) "
+          f"pointed at the copy; checked with `hermes --version` in a throwaway home: {result.version}")
+    print("ready")
+    return 0
+
+
+def refuse_misplaced_options(args: argparse.Namespace) -> None:
+    """--from belongs to warm only, and not with --check (which never copies anything)."""
+    if not getattr(args, "warm_from", None):
+        return
+    if (getattr(args, "action", "run") or "run") != "warm":
+        raise safety.Refusal("BAD_OPTION", "--from is for `hermes provingground warm --from DIR` only.")
+    if getattr(args, "check", False):
+        raise safety.Refusal("BAD_OPTION", "--check only reports the cache state; drop --from, or drop --check.")
 
 
 def cmd_sweep(args: argparse.Namespace) -> int:
@@ -462,7 +488,8 @@ USAGE_EPILOG = """actions:
   run    (default) drill the directory plugins enabled in your Hermes home, or the demo stack with --fixtures
   show   the cells with an effect in the latest saved report; `show TC04 --column stack` prints one cell;
          `show --html PATH` (or --json / --markdown) exports the saved report again
-  warm   prepare the isolated Hermes runtime once (network); `warm --check` only reports whether it is ready
+  warm   prepare the isolated Hermes runtime once (network); `warm --check` only reports whether it is ready;
+         `warm --from ~/.hermes/installs` copies it from your Hermes install instead (no network, source only read)
   sweep  remove stale temporary drill roots left by an interrupted drill (only roots PROVING GROUND marked)
 
 examples:
@@ -506,6 +533,9 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
     subparser.add_argument("--repeat", type=int, default=1, metavar="N",
                            help=f"run each solo column with a plugin effect N times in all (1-{REPEAT_MAX}); runs "
                                 "that disagree mark the cell UNSTABLE")
+    subparser.add_argument("--from", dest="warm_from", default=None, metavar="DIR",
+                           help="warm: copy the runtime from an existing Hermes installs dir (e.g. ~/.hermes/installs, "
+                                "only read) instead of downloading it")
     subparser.add_argument("--jobs", type=int, default=3, help="columns run in parallel (default 3)")
     subparser.add_argument("--timeout", type=float, default=120.0, help="seconds per column before it is stopped")
     subparser.add_argument("--json", dest="json_out", metavar="PATH", help="also write the JSON report")
@@ -539,6 +569,7 @@ def write_crash_log(exc: BaseException) -> Path | None:
 def handle_cli(args: argparse.Namespace) -> int:
     """Every outcome ends in one readable line and an exit code, never a Python traceback."""
     try:
+        refuse_misplaced_options(args)
         return COMMANDS[getattr(args, "action", "run") or "run"](args)
     except safety.Refusal as refusal:
         print(f"{refusal.code}: {refusal.message}")
