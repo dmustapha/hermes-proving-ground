@@ -97,6 +97,16 @@ In CI, on a machine with Hermes v0.23.1 and your plugin enabled:
 - run: hermes provingground --calls my-calls.yaml --check --json pg-report.json
 ```
 
+## Options
+| Option | What it does |
+|---|---|
+| `--write-contract FILE` | Writes an `expect:` file that pins every built-in cell to the outcome this drill observed. On an unchanged stack, `--calls FILE --check` meets it; when a cell changes, or a column is missing, it fails with exit 5. User calls (`U…`) keep their contracts in their own `--calls` file. |
+| `--since-last` | After the drill, prints only what changed since the latest saved report: plugins added or removed, cell outcomes, new findings and findings no longer recorded. Exit 6 when something changed. |
+| `--compare REPORT` | The same comparison against a report you name (a saved report or a `--json` export). |
+| `hermes provingground diff A.json B.json` | Compares two saved reports without running a drill. Exit 0 when nothing changed, 6 when something did. |
+| `--focus` | The terminal and Markdown views leave out the rows where every cell is PASSED THROUGH, and name the rows they left out. The HTML report always has a checkbox that does the same with CSS only; `--focus` starts it checked. |
+| `--json`, `--markdown`, `--html` | Also write the report in that format. In the JSON export, each recorded text is capped at 8192 characters, and the cut is marked. |
+
 ## Cleanup you can check
 ```console
 $ hermes provingground sweep

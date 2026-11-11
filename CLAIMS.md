@@ -57,3 +57,12 @@
 | CL-48 | Saved and exported reports replace your home and temp paths with ~ and {TMP}. | test | tests/test_report_loading.py::test_saved_and_exported_reports_carry_no_home_or_temp_paths |
 | CL-49 | The committed fixture drill left 0 drill processes after the run. | report | conditions.leftover_processes == 0 |
 | CL-50 | The Git-URL install leaves the plugin disabled until `hermes plugins enable proving-ground`. | grep | README.md :: hermes plugins enable proving-ground\s+# install leaves it disabled |
+| CL-60 | `--write-contract` pins every built-in cell to the outcome the drill observed, and the same stack meets it. | test | tests/test_contract_lockfile.py::test_contract_pins_every_built_in_cell_to_its_observed_outcome |
+| CL-61 | After a plugin is left out, `--check` against that contract fails with exit 5 (changed cell and missing column). | test | tests/test_contract_lockfile.py::test_the_same_contract_fails_with_exit_5_after_leaving_a_plugin_out |
+| CL-62 | User calls and cells that never ran are not pinned in a written contract. | test | tests/test_contract_lockfile.py::test_user_calls_and_cells_that_never_ran_are_not_pinned |
+| CL-63 | `diff A.json B.json` prints only what changed and exits 0 when nothing did, 6 when something did. | test | tests/test_report_compare.py::test_diff_action_exits_0_without_change_and_6_with_one |
+| CL-64 | `--since-last` compares with the report saved before this drill; plugins added or removed, cell outcomes and findings are listed. | test | tests/test_report_compare.py::test_since_last_compares_with_the_report_saved_before_this_drill |
+| CL-65 | When `--compare` finds changes and `--check` fails, the exit code is 5, not 6. | test | tests/test_report_compare.py::test_compare_exit_6_never_hides_a_failed_contract |
+| CL-66 | `--focus` leaves out the rows where every cell is PASSED THROUGH and names the rows it left out. | test | tests/test_focus_view.py::test_focus_markdown_hides_quiet_rows_and_names_them |
+| CL-67 | The HTML report's focus checkbox works with CSS only; the page has no script and loads nothing from the network. | test | tests/test_focus_view.py::test_html_toggle_is_css_only_and_checked_by_focus |
+| CL-68 | The JSON export caps each recorded text at 8192 characters and marks the cut. | test | tests/test_export_caps.py::test_json_export_caps_a_long_field_and_says_how_much_was_cut |
