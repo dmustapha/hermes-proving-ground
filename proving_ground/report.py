@@ -343,7 +343,10 @@ def focus_line(m: mx.Matrix) -> str:
     hidden = [c.id for c in m.calls if mx.quiet_row(m, c.id)]
     if not hidden:
         return "focus: no rows hidden; every row has a cell that is not PASSED THROUGH"
-    return (f"focus: {len(hidden)} of {len(m.calls)} rows hidden, every cell in them PASSED THROUGH "
+    probe = any(m.cells[(col, cid)].primary is mx.Outcome.NOT_EXECUTED for cid in hidden for col in m.columns
+                if (col, cid) in m.cells)
+    quiet = "PASSED THROUGH or NOT EXECUTED (probe)" if probe else "PASSED THROUGH"
+    return (f"focus: {len(hidden)} of {len(m.calls)} rows hidden, every cell in them {quiet} "
             f"(N/A cells aside): {', '.join(hidden)}")
 
 

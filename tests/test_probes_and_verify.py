@@ -215,3 +215,17 @@ def test_a_column_with_no_nudge_keeps_its_observations_unchanged() -> None:
                                         (Outcome.NOT_APPLICABLE, probes.NOT_OFFERED_NOTE), (Outcome.BLOCKED, "")])
 def test_gate_notes(gate: Outcome, note: str) -> None:
     assert probes.gate_note(gate) == note
+
+
+def test_focus_hides_an_all_not_executed_probe_row_and_says_so() -> None:
+    from proving_ground import report
+
+    m = _build(_column("baseline", ()), _column("solo:a", ("a",)))
+    line = report.focus_line(m)
+    assert "TC21" in line and "PASSED THROUGH or NOT EXECUTED (probe)" in line
+    assert report.forbidden_claims(report.render_markdown(m, focus=True)) == []
+
+
+def test_a_probe_row_with_a_subject_block_is_not_quiet() -> None:
+    m = _build(_column("baseline", ()), _column("solo:a", ("a",), {"block": "a: no"}))
+    assert not matrix.quiet_row(m, "TC21")
