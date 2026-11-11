@@ -57,29 +57,36 @@ def provenance(column: str) -> str:
     """Mandatory provenance of every cell: baseline, solo, stack or cross-check."""
     if column in ("baseline", "baseline-repeat"):
         return "baseline"
-    return {"solo": "solo", "crosscheck": "cross-check"}.get(column.partition(":")[0], "stack")
+    return {"solo": "solo", "crosscheck": "cross-check", "pair": "pair"}.get(column.partition(":")[0], "stack")
 
 
 def cell_label(cell: mx.Cell) -> str:
     label = " + ".join(mx.LABELS[o] for o in sorted(cell.outcomes, key=mx.PRECEDENCE.index))
     core = " (core)" if cell.core else " (core + plugin)" if cell.core_also else ""
-    return label + core + (" ~" if cell.unstable else "")
+    return label + core + (" UNSTABLE" if cell.varied else " ~" if cell.unstable else "")
+
+
+def _plugin_title(name: str) -> str:
+    """A solo column is titled by its plugin, a pair column (pair:a+b) as "a + b"."""
+    if name.startswith("pair:"):
+        return " + ".join(mx.pair_keys(name))
+    return name.removeprefix("solo:")
 
 
 def column_title(name: str) -> str:
-    return {"baseline": "baseline (no plugins)", "stack": "FULL STACK"}.get(name, name.removeprefix("solo:"))
+    return {"baseline": "baseline (no plugins)", "stack": "FULL STACK"}.get(name, _plugin_title(name))
 
 
 def short_title(name: str) -> str:
-    return {"baseline": "baseline", "stack": "FULL STACK"}.get(name, name.removeprefix("solo:"))
+    return {"baseline": "baseline", "stack": "FULL STACK"}.get(name, _plugin_title(name))
 
 
 def _source(m: mx.Matrix, cell: mx.Cell) -> str:
     """Who the effect is attributed to: the solo column's plugin, or the stack attribution's plugins."""
     if cell.core:
         return ""
-    if cell.column.startswith("solo:"):
-        return cell.column.removeprefix("solo:")
+    if cell.column.startswith(("solo:", "pair:")):
+        return _plugin_title(cell.column)
     return ", ".join(p for a in m.attributions if a.call_id == cell.call_id for p in a.plugins)
 
 
@@ -118,7 +125,7 @@ def matrix_to_dict(m: mx.Matrix) -> dict[str, Any]:
     cells = [{"column": c.column, "call_id": c.call_id, "outcomes": [o.value for o in c.outcomes],
               "primary": c.primary.value, "hop": c.hop, "core": c.core, "core_also": c.core_also,
               "unstable": c.unstable, "note": c.note,
-              "provenance": provenance(c.column)}
+              "provenance": provenance(c.column), **({"varied": list(c.varied)} if c.varied else {})}
              for c in m.cells.values()]
     calls = [{**asdict(c), "expect": {k: list(v) for k, v in (c.expect or {}).items()}} for c in m.calls]
     return {"schema": REPORT_SCHEMA, "generator": GENERATOR, "headline": HEADLINE,
@@ -138,7 +145,7 @@ def matrix_to_dict(m: mx.Matrix) -> dict[str, Any]:
 def _cell_from(raw: Mapping[str, Any]) -> mx.Cell:
     return mx.Cell(raw["column"], raw["call_id"], tuple(mx.Outcome(o) for o in raw["outcomes"]),
                    raw.get("hop"), bool(raw.get("core")), bool(raw.get("unstable")), raw.get("note", ""),
-                   bool(raw.get("core_also")))
+                   bool(raw.get("core_also")), tuple(str(v) for v in raw.get("varied") or ()))
 
 
 def _known(cls: type, raw: Mapping[str, Any]) -> dict[str, Any]:

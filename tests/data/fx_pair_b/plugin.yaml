@@ -1,0 +1,6 @@
+# File: tests/data/fx_pair_b/plugin.yaml
+name: fx_pair_b
+version: "0.1.0"
+description: "Test-only: changes tool results that carry the pair marker; no built-in test call carries it."
+author: dmustapha
+provides_hooks: [transform_tool_result]

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import atexit
+import itertools
 import json
 import os
 import re
@@ -80,6 +81,8 @@ class RunnerSettings:
     cell_timeout_s: float = 120.0
     jobs: int = 3
     wires: bool = False  # --all-wires: children also record the context and reply wire
+    pairs: bool = False  # --pairs: pair columns for effects seen only in the full stack
+    repeat: int = 1  # --repeat N: solo columns with a plugin effect run N times in all
 
 
 @dataclass
@@ -903,6 +906,10 @@ class DrillRun:
     load_order: tuple[str, ...] = ()
     unreplayable: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
     copy_notes: tuple[str, ...] = ()
+    pair_total: int | None = None  # --pairs: how many pairs the stack has (None: not asked); pair columns are in columns
+    pair_note: str = ""
+    repeats: dict[str, list[matrix.ColumnRun]] = field(default_factory=dict)  # --repeat: extra runs per solo column
+    repeat: int = 1  # --repeat N as asked
 
 
 def run_drill(subjects: Sequence[PluginSource], templates: Sequence[testcalls.CallTemplate],
@@ -932,9 +939,47 @@ def run_drill(subjects: Sequence[PluginSource], templates: Sequence[testcalls.Ca
 
         results = [_to_column(r) for r in _parallel(repeat_and_rest, work, settings.jobs, done)]
         crosscheck, refused = _run_crosscheck(results, subjects, canary, recorder, settings)
-    return DrillRun([baseline] + results[1:], results[0], crosscheck, list(skipped),
+        view = matrix.provisional([baseline] + results[1:], results[0], order)
+        pair_runs, pair_total, pair_note = _run_pairs(view, subjects, work, settings) if settings.pairs else ([], None, "")
+        repeats = _run_repeats(view, columns, work, settings) if settings.repeat > 1 else {}
+    return DrillRun([baseline] + results[1:] + pair_runs, results[0], crosscheck, list(skipped),
                     [s.key for s in subjects if s.needs_env], canary, time.monotonic() - started, order, refused,
-                    tuple(sorted(set(notes))))
+                    tuple(sorted(set(notes))), pair_total, pair_note, repeats, settings.repeat)
+
+
+def _pair_spec(a: PluginSource, b: PluginSource, runnable: Sequence[PluginSource]) -> ColumnSpec:
+    """A pair column carries both plugins plus their requires_plugins, in load order."""
+    both = {s.key: s for s in (*_solo_plugins(a, runnable), *_solo_plugins(b, runnable))}
+    return ColumnSpec(f"pair:{a.key}+{b.key}", tuple(load_order(list(both.values()))))
+
+
+def _run_pairs(view: matrix.Matrix, subjects: Sequence[PluginSource], work: Callable[[ColumnSpec], CellRun],
+               settings: RunnerSettings) -> tuple[list[matrix.ColumnRun], int, str]:
+    """--pairs: when an effect appears only in the full stack, run pairs of its plugins (at most PAIR_CAP, in load
+    order) to find the smallest set that reproduces it. Returns (pair columns, pairs that exist, report note)."""
+    runnable = [s for s in subjects if not s.needs_env]
+    every = list(itertools.combinations(runnable, 2))
+    interactions = [a for a in view.attributions if a.kind == "interaction"]
+    if not interactions:
+        return [], len(every), "no effect appears only in the full stack, so no pair columns were run"
+    if len(runnable) == 2:
+        return [], len(every), "the full stack is itself one pair, so no extra pair columns were run"
+    chosen = every[:matrix.PAIR_CAP]
+    runs = [_to_column(r) for r in _parallel([_pair_spec(a, b, runnable) for a, b in chosen], work, settings.jobs)]
+    capped = f"; capped at {matrix.PAIR_CAP} of {len(every)} pairs" if len(every) > len(chosen) else ""
+    effects = f"{len(interactions)} effect{'' if len(interactions) == 1 else 's'}"
+    return runs, len(every), f"{len(runs)} pair columns run for {effects} seen only in the full stack{capped}"
+
+
+def _run_repeats(view: matrix.Matrix, columns: Sequence[ColumnSpec], work: Callable[[ColumnSpec], CellRun],
+                 settings: RunnerSettings) -> dict[str, list[matrix.ColumnRun]]:
+    """--repeat N: the solo columns with a plugin effect run N - 1 more times each; quiet solos are not repeated."""
+    wanted = set(matrix.effect_columns(view))
+    specs = [spec for spec in columns if spec.name in wanted for _ in range(settings.repeat - 1)]
+    repeats: dict[str, list[matrix.ColumnRun]] = {name: [] for name in sorted(wanted)}
+    for run in _parallel(specs, work, settings.jobs):
+        repeats[run.spec.name].append(_to_column(run))
+    return repeats
 
 
 def _run_crosscheck(results: Sequence[matrix.ColumnRun], subjects: Sequence[PluginSource], canary: str,

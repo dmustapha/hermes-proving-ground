@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import traceback
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -27,6 +28,7 @@ LAST_ERROR = "last-error.json"
 REPORT_MAX_BYTES = 8 * 1024 * 1024  # a saved report never exceeds this; long strings are clipped
 REPORTS_KEPT = 20  # the newest report-*.json files kept; older ones are removed on save
 CLIP_MARK = " …[clipped by PROVING GROUND: report size cap]"
+REPEAT_MAX = 5  # --repeat N: each repeated solo column runs at most this many times
 DEBUG_ENV = "PROVINGGROUND_DEBUG"  # set it to see the Python traceback instead of the one-line error
 
 
@@ -46,7 +48,15 @@ def build_settings(args: argparse.Namespace) -> runner.RunnerSettings:
     return runner.RunnerSettings(hermes_bin=find_hermes(getattr(args, "hermes_bin", None)), pg_source=PG_SOURCE,
                                  warm_cache=temp_base / "provingground-cache" / "installs", temp_base=temp_base,
                                  cell_timeout_s=float(getattr(args, "timeout", 120.0)), jobs=int(getattr(args, "jobs", 3)),
-                                 wires=bool(getattr(args, "all_wires", False)))
+                                 wires=bool(getattr(args, "all_wires", False)),
+                                 pairs=bool(getattr(args, "pairs", False)), repeat=repeat_count(args))
+
+
+def repeat_count(args: argparse.Namespace) -> int:
+    repeat = getattr(args, "repeat", 1)
+    if not isinstance(repeat, int) or not 1 <= repeat <= REPEAT_MAX:
+        raise safety.Refusal("BAD_OPTION", f"--repeat takes a whole number from 1 to {REPEAT_MAX}, not {repeat}.")
+    return repeat
 
 
 def user_config() -> dict[str, Any]:
@@ -136,9 +146,25 @@ WIRES_NOTE = ("context and reply recorded in every column (pre_llm_call, transfo
               "taps that return nothing); two extra rows, not counted as test calls")
 
 
-def drill_options(settings: runner.RunnerSettings) -> dict[str, str]:
+def repeat_note(drill: runner.DrillRun, m: matrix.Matrix) -> str:
+    if not drill.repeats:
+        return f"{drill.repeat} runs asked; no solo column has a plugin effect, so none was run again"
+    stopped = sum(1 for runs in drill.repeats.values() for r in runs if r.abort_reason or r.load_failed)
+    unstable = sum(1 for cell in m.cells.values() if cell.varied)
+    names = ", ".join(n.removeprefix("solo:") for n in drill.repeats)
+    return (f"{drill.repeat} solo runs each of {names} (the solo columns with a plugin effect); "
+            f"{unstable} cells disagree between runs (UNSTABLE)"
+            + (f"; {stopped} repeat runs stopped and were not compared" if stopped else ""))
+
+
+def drill_options(drill: runner.DrillRun, infos: Sequence[matrix.CallInfo], m: matrix.Matrix) -> dict[str, str]:
     """The opt-in options this drill ran with, as report lines; empty for a default drill."""
-    return {"wires": WIRES_NOTE} if settings.wires else {}
+    options = {"wires": WIRES_NOTE} if any(i.tool == matrix.WIRE_TOOL for i in infos) else {}
+    if drill.pair_total is not None:
+        options["pairs"] = drill.pair_note
+    if drill.repeat > 1:
+        options["repeat"] = repeat_note(drill, m)
+    return options
 
 
 def all_infos(templates: Sequence[testcalls.CallTemplate], settings: runner.RunnerSettings) -> list[matrix.CallInfo]:
@@ -146,14 +172,16 @@ def all_infos(templates: Sequence[testcalls.CallTemplate], settings: runner.Runn
 
 
 def assemble(drill: runner.DrillRun, infos: Sequence[matrix.CallInfo], version: str, started: str,
-             leftover: tuple[int, int] | None = None, options: dict[str, str] | None = None) -> matrix.Matrix:
+             leftover: tuple[int, int] | None = None) -> matrix.Matrix:
     extra: dict[str, Any] = {"credentials": credentials_line(drill.copy_notes),
                              "approvals": runner.approvals_summary()}
     if leftover is not None:
         extra.update(leftover_processes=leftover[0], leftover_roots=leftover[1])
-    return matrix.build_matrix(drill.columns, drill.baseline_repeat, drill.crosscheck, infos, version, started,
-                               drill.wall_s, drill.skipped, drill.needs_env, load_order=drill.load_order,
-                               unreplayable=drill.unreplayable, conditions_extra=extra, options=options)
+    m = matrix.build_matrix(drill.columns, drill.baseline_repeat, drill.crosscheck, infos, version, started,
+                            drill.wall_s, drill.skipped, drill.needs_env, load_order=drill.load_order,
+                            unreplayable=drill.unreplayable, conditions_extra=extra, repeats=drill.repeats,
+                            pair_total=drill.pair_total)
+    return replace(m, options=drill_options(drill, infos, m))
 
 
 def planned_columns(subjects: Sequence[runner.PluginSource]) -> tuple[str, ...]:
@@ -183,7 +211,7 @@ def run_matrix(args: argparse.Namespace, on_partial: Callable[[report.LiveFrame]
     drill = runner.run_drill(subjects, templates, settings, partial, skipped)
     runner.reap_orphans(settings.temp_base)
     leftover = runner.leftovers(settings.temp_base)
-    return assemble(drill, infos, version, started, leftover, drill_options(settings)), note
+    return assemble(drill, infos, version, started, leftover), note
 
 
 def live_frame(done: Sequence[matrix.ColumnRun], planned: Sequence[str], infos: Sequence[matrix.CallInfo],
@@ -472,6 +500,12 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
     subparser.add_argument("--all-wires", action="store_true",
                            help="also record the context sent to the model (pre_llm_call) and the final reply "
                                 "(transform_llm_output): two extra rows, CONTEXT ADDED and REPLY CHANGED")
+    subparser.add_argument("--pairs", action="store_true",
+                           help="for an effect seen only in the full stack, run pairs of plugins to name the smallest "
+                                f"set that reproduces it (at most {matrix.PAIR_CAP} pair columns)")
+    subparser.add_argument("--repeat", type=int, default=1, metavar="N",
+                           help=f"run each solo column with a plugin effect N times in all (1-{REPEAT_MAX}); runs "
+                                "that disagree mark the cell UNSTABLE")
     subparser.add_argument("--jobs", type=int, default=3, help="columns run in parallel (default 3)")
     subparser.add_argument("--timeout", type=float, default=120.0, help="seconds per column before it is stopped")
     subparser.add_argument("--json", dest="json_out", metavar="PATH", help="also write the JSON report")

@@ -102,6 +102,7 @@ class Cell:
     unstable: bool = False
     note: str = ""
     core_also: bool = False  # a plugin changed the delivered result on a call Hermes core also changes
+    varied: tuple[str, ...] = ()  # --repeat: this solo cell's label in each run, when the runs disagreed (UNSTABLE)
 
     @property
     def primary(self) -> Outcome:
@@ -496,6 +497,16 @@ def rewrites_for_crosscheck(stack: ColumnRun) -> list[tuple[str, str, Mapping[st
 
 def _attribute_one(call_id: str, outcome: Outcome, base: Cell, solos: Mapping[str, Mapping[str, Cell]],
                    load_order: Sequence[str]) -> Attribution:
+    found = _attribute_first_run(call_id, outcome, base, solos, load_order)
+    varied = [k for k in load_order if solos[k][call_id].varied]
+    if not varied:
+        return found
+    return replace(found, note=f"{found.note}; UNSTABLE: the repeated solo runs of {', '.join(varied)} disagree on "
+                               f"{call_id}, so this attribution can change between drills")
+
+
+def _attribute_first_run(call_id: str, outcome: Outcome, base: Cell, solos: Mapping[str, Mapping[str, Cell]],
+                         load_order: Sequence[str]) -> Attribution:
     matches = tuple(k for k in load_order if outcome in solos[k][call_id].outcomes and not solos[k][call_id].core)
     if outcome in base.outcomes and base.core and not matches:
         return Attribution(call_id, outcome, "core", (), "the zero-plugin baseline shows the same effect")
@@ -583,7 +594,7 @@ def _escapes(columns: Sequence[ColumnRun]) -> list[Finding]:
 def _load_failed_cell(cell: Cell, col: ColumnRun) -> Cell:
     """Release rule: a plugin not positively confirmed loaded is never rendered as PASSED THROUGH."""
     note = f"not confirmed loaded in the child: {', '.join(col.load_failed)}"
-    if col.name.startswith("solo:") or cell.primary in QUIET:
+    if col.name.startswith(("solo:", "pair:")) or cell.primary in QUIET:
         return Cell(cell.column, cell.call_id, (Outcome.LOAD_FAILED,), note=note)
     return replace(cell, note="; ".join(filter(None, [cell.note, note])))
 
@@ -624,12 +635,97 @@ def model_line(steps: int, n_calls: int) -> str:
     return f"NOT CALLED (scripted turn: {steps} llm_execution steps answered by PROVING GROUND, 0 provider calls)"
 
 
+# Pairwise columns (--pairs) and repeated solo runs (--repeat N), both opt-in and both judged with the rules above.
+PAIR_CAP = 10  # at most this many pair columns per drill (all pairs of five plugins); the report says when it capped
+
+
+def pair_keys(name: str) -> tuple[str, ...]:
+    return tuple(name.removeprefix("pair:").split("+"))
+
+
+def _pair_finding(a: Attribution, stack_plugins: tuple[str, ...], pairs: Mapping[str, Mapping[str, Cell]],
+                  pair_total: int) -> Finding:
+    label = f"{a.call_id} {LABELS[a.outcome]}"
+    if len(stack_plugins) == 2:
+        return Finding("STACK_ONLY_INTERACTION", a.call_id, stack_plugins,
+                       f"{label} appears only with {stack_plugins[0]} and {stack_plugins[1]} together and neither does "
+                       "it alone, so the smallest set that reproduces it is these two plugins.")
+    hits = [name for name, cells in pairs.items()
+            if a.call_id in cells and a.outcome in cells[a.call_id].outcomes and not cells[a.call_id].core]
+    if hits:
+        keys = tuple(dict.fromkeys(k for name in hits for k in pair_keys(name)))
+        return Finding("STACK_ONLY_INTERACTION", a.call_id, keys,
+                       f"{label} appears only in combination; no plugin does it alone. The smallest set observed to "
+                       f"reproduce it is a pair: {'; '.join(' + '.join(pair_keys(n)) for n in hits)}.")
+    if len(pairs) < pair_total:
+        capped = f"; capped at {PAIR_CAP}" if pair_total > PAIR_CAP else ""
+        return Finding("STACK_ONLY_INTERACTION", a.call_id, (),
+                       f"{label} appears only in combination. None of the {len(pairs)} pair columns that ran to the "
+                       f"end reproduces it ({pair_total} pairs exist{capped}), so it may need a pair not run here "
+                       "or 3+ plugins.")
+    return Finding("STACK_ONLY_INTERACTION", a.call_id, (),
+                   f"{label} appears only in combination, and no pair of these plugins reproduces it on its own: "
+                   "it needs 3+ plugins together.")
+
+
+def pair_findings(columns: Sequence[ColumnRun], grid: Mapping[str, Mapping[str, Cell]],
+                  attributions: Sequence[Attribution], pair_total: int) -> list[Finding]:
+    """One STACK_ONLY_INTERACTION per interaction-kind attribution, naming the smallest set observed to reproduce it.
+    A pair column that stopped or did not confirm its plugins loaded is not evidence either way."""
+    stack = next((c for c in columns if c.name == "stack"), None)
+    if stack is None:
+        return []
+    usable = {c.name: grid[c.name] for c in columns
+              if c.name.startswith("pair:") and not c.load_failed and not c.abort_reason}
+    return [_pair_finding(a, stack.plugins, usable, pair_total) for a in attributions if a.kind == "interaction"]
+
+
+def _run_label(cell: Cell) -> str:
+    return " + ".join(LABELS[o] for o in sorted(cell.outcomes, key=PRECEDENCE.index))
+
+
+def _unstable_note(labels: Sequence[str]) -> str:
+    counts = ", ".join(f"{label} in {labels.count(label)} of {len(labels)}" for label in dict.fromkeys(labels))
+    return (f"UNSTABLE: {len(labels)} solo runs of this plugin disagree ({counts}); its effect on this call may "
+            "depend on state, timing or randomness, so no single run is the answer")
+
+
+def mark_unstable_solos(grid: dict[str, dict[str, Cell]], repeats: Mapping[str, Sequence[ColumnRun]],
+                        base: ColumnRun, unstable: frozenset[str]) -> None:
+    """--repeat: a solo cell whose label differs between its runs is marked UNSTABLE (first run's label kept, every
+    run's label listed). A repeat run that stopped or did not confirm its plugin is not compared."""
+    for name, runs in repeats.items():
+        extra = [_column_cells(r, base, unstable) for r in runs if not r.abort_reason and not r.load_failed]
+        for cid, cell in list(grid.get(name, {}).items()):
+            labels = [_run_label(cell)] + [_run_label(cells[cid]) for cells in extra if cid in cells]
+            if len(set(labels)) > 1:
+                grid[name][cid] = replace(cell, unstable=True, varied=tuple(labels),
+                                          note="; ".join(filter(None, [cell.note, _unstable_note(labels)])))
+
+
+def effect_columns(m: Matrix) -> list[str]:
+    """Solo columns with a plugin effect: a cell other than a quiet one (PASSED THROUGH, LOAD FAILED, NOT RUN, N/A)
+    or a core effect. These are the ones --repeat runs again."""
+    return [name for name in m.columns if name.startswith("solo:")
+            and any(c.primary not in QUIET and not c.core for (col, _cid), c in m.cells.items() if col == name)]
+
+
+def provisional(columns: Sequence[ColumnRun], baseline_repeat: ColumnRun | None,
+                load_order: Sequence[str]) -> Matrix:
+    """The matrix so far, without call texts: what the runner reads to decide which pair and repeat columns to run."""
+    infos = [CallInfo(cid, obs.tool, "", "") for cid, obs in columns[0].observations.items()]
+    return build_matrix(columns, baseline_repeat, {}, infos, "", "", 0.0, load_order=load_order)
+
+
 def build_matrix(columns: Sequence[ColumnRun], baseline_repeat: ColumnRun | None,
                  crosscheck: Mapping[str, ColumnRun], calls: Sequence[CallInfo], hermes_version: str,
                  started_at: str, wall_s: float, skipped: Sequence[tuple[str, str]] = (),
                  needs_env: Sequence[str] = (), *, load_order: Sequence[str] | None = None,
                  unreplayable: Sequence[tuple[str, Sequence[str]]] = (), conditions_extra: Mapping[str, Any] | None = None,
-                 options: Mapping[str, str] | None = None) -> Matrix:
+                 options: Mapping[str, str] | None = None, repeats: Mapping[str, Sequence[ColumnRun]] | None = None,
+                 pair_total: int | None = None) -> Matrix:
+    """*repeats* (--repeat): extra runs per solo column name. *pair_total* (--pairs): how many pairs the stack has;
+    the pair columns themselves arrive in *columns*, named pair:<a>+<b>."""
     base, others = columns[0], list(columns[1:])
     unstable = unstable_calls(base, baseline_repeat)
     grid: dict[str, dict[str, Cell]] = {"baseline": {cid: baseline_cell(o) for cid, o in base.observations.items()}}
@@ -637,6 +733,7 @@ def build_matrix(columns: Sequence[ColumnRun], baseline_repeat: ColumnRun | None
         grid[col.name] = _column_cells(col, base, unstable)
     for key in needs_env:
         grid[f"solo:{key}"] = _na_cells(key, calls)
+    mark_unstable_solos(grid, repeats or {}, base, unstable)
     failed = {c.name: c.load_failed for c in list(columns) + list(crosscheck.values()) if c.load_failed}
     solos = {name.removeprefix("solo:"): cells for name, cells in grid.items() if name.startswith("solo:")}
     order = tuple(k for k in (load_order if load_order is not None else sorted(solos)) if k in solos)
@@ -646,6 +743,7 @@ def build_matrix(columns: Sequence[ColumnRun], baseline_repeat: ColumnRun | None
     cross = {k: _column_cells(c, c, frozenset()) for k, c in crosscheck.items() if not c.load_failed}
     findings = _unseen(grid.get("stack", {}), cross, attributions) + _masked(grid.get("stack", {}), usable, attributions) \
         if "stack" in grid else []
+    findings += pair_findings(columns, grid, attributions, pair_total) if pair_total is not None else []
     findings += _escapes(list(columns) + list(crosscheck.values()))
     connects = [c for col in list(columns) + list(crosscheck.values()) for c in col.connects]
     steps = sum(c.scripted_steps for c in list(columns) + list(crosscheck.values()))

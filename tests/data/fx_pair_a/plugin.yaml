@@ -1,0 +1,6 @@
+# File: tests/data/fx_pair_a/plugin.yaml
+name: fx_pair_a
+version: "0.1.0"
+description: "Test-only: rewrites the plain marker into the pair marker; on its own nothing else reacts to it."
+author: dmustapha
+provides_hooks: [pre_tool_call]
