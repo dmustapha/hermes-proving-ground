@@ -154,10 +154,14 @@ def test_solo_runs_that_disagree_mark_the_cell_unstable_with_every_label() -> No
     assert "UNSTABLE" in attribution.note and attribution.plugins == ("fx_guard",)
 
 
-def test_solo_runs_that_agree_leave_the_matrix_as_without_repeat() -> None:
+def test_solo_runs_that_agree_leave_the_cells_alone_and_count_the_runs() -> None:
     plain = guard_matrix([])
     again = guard_matrix([GUARD_BLOCK, GUARD_BLOCK])
-    assert again.cells == plain.cells and again.attributions == plain.attributions
+    assert again.cells == plain.cells and again.findings == plain.findings
+    [before] = [a for a in plain.attributions if a.call_id == "TC02"]
+    [after] = [a for a in again.attributions if a.call_id == "TC02"]
+    assert before.note.startswith("observed in one solo run: fx_guard")
+    assert after.note.startswith("observed in all 3 solo runs: fx_guard") and after.plugins == before.plugins
 
 
 def test_a_repeat_run_that_stopped_is_not_compared() -> None:

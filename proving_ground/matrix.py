@@ -703,6 +703,19 @@ def mark_unstable_solos(grid: dict[str, dict[str, Cell]], repeats: Mapping[str, 
                                           note="; ".join(filter(None, [cell.note, _unstable_note(labels)])))
 
 
+def _with_repeat_count(a: Attribution, grid: Mapping[str, Mapping[str, Cell]],
+                       repeats: Mapping[str, Sequence[ColumnRun]]) -> Attribution:
+    """--repeat: a solo match whose repeated runs all agreed says how many runs showed it, not "one solo run"."""
+    if a.kind != "solo-match":
+        return a
+    name = f"solo:{a.plugins[0]}"
+    runs = 1 + sum(1 for r in repeats.get(name, ()) if not r.abort_reason and not r.load_failed)
+    if runs == 1 or grid[name][a.call_id].varied:
+        return a
+    return replace(a, note=f"observed in all {runs} solo runs: {a.plugins[0]} (repeated with --repeat; a stateful "
+                           "plugin can still differ in another drill)")
+
+
 def effect_columns(m: Matrix) -> list[str]:
     """Solo columns with a plugin effect: a cell other than a quiet one (PASSED THROUGH, LOAD FAILED, NOT RUN, N/A)
     or a core effect. These are the ones --repeat runs again."""
@@ -740,6 +753,7 @@ def build_matrix(columns: Sequence[ColumnRun], baseline_repeat: ColumnRun | None
     usable = {k: v for k, v in solos.items() if k not in needs_env and f"solo:{k}" not in failed}
     stack = grid.get("stack") or (next(iter(solos.values())) if len(solos) == 1 else {})
     attributions = attribute(stack, grid["baseline"], usable, tuple(k for k in order if k in usable)) if stack else []
+    attributions = [_with_repeat_count(a, grid, repeats or {}) for a in attributions]
     cross = {k: _column_cells(c, c, frozenset()) for k, c in crosscheck.items() if not c.load_failed}
     findings = _unseen(grid.get("stack", {}), cross, attributions) + _masked(grid.get("stack", {}), usable, attributions) \
         if "stack" in grid else []
