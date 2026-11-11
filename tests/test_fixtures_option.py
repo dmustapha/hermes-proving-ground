@@ -66,3 +66,23 @@ def test_without_is_checked_against_the_picked_stack(tmp_path) -> None:
 @pytest.mark.parametrize("raw, expected", [("fixtures", True), ("fixtures extended", "extended"), ("", False)])
 def test_slash_keeps_a_truthy_fixtures_value_and_accepts_extended(raw, expected) -> None:
     assert cli._slash_args(raw).fixtures == expected
+
+
+def test_without_fixtures_the_drill_tests_the_plugins_enabled_in_your_hermes_home(monkeypatch, tmp_path) -> None:
+    import sys
+    import types
+
+    stub = types.ModuleType("hermes_constants")
+    stub.get_hermes_home = lambda: str(tmp_path)
+    monkeypatch.setitem(sys.modules, "hermes_constants", stub)
+    monkeypatch.setattr(cli, "user_config", lambda: {"plugins": {"enabled": ["mine"]}})
+    seen = []
+
+    def discover(home, config):
+        seen.append((home, config["plugins"]["enabled"]))
+        return [runner.PluginSource("mine", tmp_path / "plugins" / "mine")], []
+
+    monkeypatch.setattr(runner, "discover_subjects", discover)
+    settings = runner.RunnerSettings(Path("/bin/sh"), ROOT, tmp_path / "cache", tmp_path)
+    picked, _skipped = cli.select_subjects(parse([]), settings)
+    assert [s.key for s in picked] == ["mine"] and seen == [(tmp_path, ["mine"])]
