@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from proving_ground import cli, runner, testcalls
+from proving_ground import cli, report, runner, testcalls
 from proving_ground.matrix import Outcome
 
 DATA = Path(__file__).resolve().parent / "data"
@@ -101,5 +101,8 @@ def test_a_pre_verify_nudge_is_turn_extended_on_the_edits_and_attributed(drill) 
         assert m.cell("solo:fx_nudger", cid).primary is Outcome.TURN_EXTENDED, cid
         assert m.cell("stack", cid).primary is Outcome.TURN_EXTENDED, cid
         assert m.cell(f"solo:{GUARD}", cid).primary is Outcome.PASSED_THROUGH, cid
+    sections = dict(report.detail_sections(m, "solo:fx_nudger", "TC06"))
+    nudge = next(v for k, v in sections.items() if k.startswith("pre_verify nudge"))
+    assert any("fx_nudger: re-read the files you edited before you finish." in line for line in nudge)
     turn = [a for a in m.attributions if a.outcome is Outcome.TURN_EXTENDED]
     assert {a.call_id for a in turn} == set(EDITS) and {a.plugins for a in turn} == {("fx_nudger",)}

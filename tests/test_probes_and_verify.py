@@ -229,3 +229,10 @@ def test_focus_hides_an_all_not_executed_probe_row_and_says_so() -> None:
 def test_a_probe_row_with_a_subject_block_is_not_quiet() -> None:
     m = _build(_column("baseline", ()), _column("solo:a", ("a",), {"block": "a: no"}))
     assert not matrix.quiet_row(m, "TC21")
+
+
+def test_the_nudge_texts_are_the_user_messages_of_the_extra_final_replies() -> None:
+    events = [{"ev": "done", "last_user": "run provingground wiring test"}, {"ev": "pre_verify", "attempt": 0},
+              {"ev": "done", "last_user": "fx_nudger: re-read"}, {"ev": "pre_verify", "attempt": 1}]
+    assert probes.nudges(events) == ("fx_nudger: re-read",)
+    assert probes.nudges(events[:2]) == ()

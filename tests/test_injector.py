@@ -96,3 +96,14 @@ def test_unbuildable_last_resort_fails_at_register_not_at_run(tmp_path: Path, mo
     monkeypatch.setattr(injector, "_completion", broken)
     with pytest.raises(ImportError):
         injector.make_llm_execution(*setup_state(tmp_path, []))
+
+
+def test_every_final_reply_logs_the_user_message_it_answers(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(injector, "_completion", lambda body: body)
+    state, log = setup_state(tmp_path, [])
+    middleware = injector.make_llm_execution(state, log)
+    nudge = [{"type": "text", "text": "re-read the files you edited"}]
+    middleware(request={"messages": [{"role": "user", "content": "go"}, {"role": "assistant", "content": "done"},
+                                     {"role": "user", "content": nudge}]}, next_call=never)
+    events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [e["last_user"] for e in events if e["ev"] == "done"] == ["re-read the files you edited"]

@@ -37,6 +37,12 @@ def turn_extensions(events: Sequence[Mapping[str, Any]]) -> int:
     return max(0, sum(1 for e in events if e.get("ev") == "done") - 1)
 
 
+def nudges(events: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
+    """The user message each extra final reply answered (injector logs it on every "done"): the nudge texts."""
+    finals = [e for e in events if e.get("ev") == "done"]
+    return tuple(str(e["last_user"]) for e in finals[1:] if e.get("last_user"))
+
+
 def changed_paths(events: Sequence[Mapping[str, Any]]) -> frozenset[str]:
     return frozenset(str(p) for e in events if e.get("ev") == "pre_verify" for p in e.get("changed_paths") or ())
 
@@ -67,6 +73,7 @@ def with_turn_extensions(observations: Mapping[str, Any], events: Sequence[Mappi
     if not extra:
         return dict(observations)
     edited = _edited_paths(events, sandbox, recorder_url, normalize)
-    return {cid: replace(obs, turn_extended=extra)
+    texts = nudges(events)
+    return {cid: replace(obs, turn_extended=extra, nudges=texts)
             if obs.tool in EDIT_TOOLS and obs.ran and str(obs.final_args.get("path")) in edited else obs
             for cid, obs in observations.items()}

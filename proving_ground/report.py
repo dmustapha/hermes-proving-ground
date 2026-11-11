@@ -293,7 +293,7 @@ def _call_from(raw: Mapping[str, Any]) -> mx.CallInfo:
 
 
 def _obs_from(raw: Mapping[str, Any]) -> mx.CallObservation:
-    tuples = ("escaped_reasons", "request_rewrite", "reply_changes", "middleware_trace")
+    tuples = ("escaped_reasons", "request_rewrite", "reply_changes", "middleware_trace", "nudges")
     return mx.CallObservation(**{**_known(mx.CallObservation, raw),
                                  **{k: tuple(raw.get(k) or ()) for k in tuples}})
 
@@ -618,6 +618,8 @@ def detail_sections(m: mx.Matrix, column: str, call_id: str) -> list[tuple[str, 
              _attribution_for(m, call_id))]
     if obs.tool == mx.WIRE_TOOL:
         return head + _wire_sections(obs, base)
+    if obs.turn_extended > base.turn_extended and obs.nudges:
+        head.append((f"pre_verify nudge the turn continued on · {QUOTE_TITLE}", quoted([line for text in obs.nudges for line in text.splitlines()])))
     return head + [
         ("args as sent by PROVING GROUND (from the plan)", [str(dict(obs.injected_args))]),
         (f"args that actually ran (after every plugin) · {QUOTE_TITLE}", quoted([str(dict(obs.final_args))])),

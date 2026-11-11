@@ -80,6 +80,12 @@ def request_rewrite(request: Mapping[str, Any], original: Any, trace: Any) -> li
     return [str(k) for k in keys if _canon(request.get(k)) != _canon(original.get(k))] + labels
 
 
+def last_user_text(messages: list[Any]) -> str | None:
+    """The newest user message's text: on a final reply after the first, the pre_verify nudge the turn continued on."""
+    users = [m for m in messages if isinstance(m, dict) and m.get("role") == "user"]
+    return _content_text(users[-1].get("content")) if users else None
+
+
 def _step_messages(request: Mapping[str, Any], original: Any) -> list[Any] | None:
     """Steps are counted from the request before middleware: an llm_request middleware that trims history must not
     make the drill re-issue an earlier call."""
@@ -127,7 +133,7 @@ def scripted_reply(request: Any, state_dir: Path, log: EventLog,
         _first_step(plan, log, step)
     body = tool_call_body(done, calls[done]) if done < len(calls) else final_body(DONE_SENTINEL)
     if done >= len(calls):
-        log.write("done", steps=done)
+        log.write("done", steps=done, last_user=clip_text(last_user_text(messages)))
     if step.ledger is not None:
         step.ledger.expect(call_id, body)
     return body

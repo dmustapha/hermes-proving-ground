@@ -94,6 +94,7 @@ class CallObservation:
     execution_replaced: bool = False  # post_tool_call fired, but neither PG's tool_execution tap nor pre_tool_call did
     middleware_trace: tuple[str, ...] = ()  # tool_request middleware labels from post_tool_call
     turn_extended: int = 0  # pre_verify nudges after the turn's edits, when this call's path was one of them
+    nudges: tuple[str, ...] = ()  # the user message each of those extra steps answered (plugin text)
 
 
 @dataclass(frozen=True)
