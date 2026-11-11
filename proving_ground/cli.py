@@ -11,6 +11,7 @@ import contextvars
 import datetime as dt
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -360,9 +361,12 @@ def export_json(m: matrix.Matrix) -> str:
 
 def shareable(m: matrix.Matrix) -> matrix.Matrix:
     """The matrix as it is saved and exported: this machine's home and temp paths in any recorded text (a plugin
-    traceback, an error message) become ~ and {TMP}. The terminal view, which stays local, is not changed."""
+    traceback, an error message) become ~ and {TMP}, and TC16's documented fake AWS key id is written as its
+    {FAKE_AWS_KEY_ID} placeholder, so a committed or shared report never trips a secret scanner (Hermes's install
+    scan blocks a plugin carrying it). The terminal view, which stays local, is not changed."""
     temp = tempfile.gettempdir()
     rules = report.path_rules({str(Path.home()): "~", temp: "{TMP}", os.path.realpath(temp): "{TMP}"})
+    rules.append((re.compile(re.escape(testcalls.FAKE_AWS_KEY_ID)), "{FAKE_AWS_KEY_ID}"))
     return report.matrix_from_dict(report.scrub_paths(report.matrix_to_dict(m), rules))
 
 

@@ -73,3 +73,15 @@ def test_cell_detail_line_cap_is_unchanged_for_short_lines() -> None:
     m = replace(m, observations={**m.observations, "stack": {**m.observations["stack"], "TC01": obs}})
     detail = report.render_cell_detail(m, "stack", "TC01")
     assert "│ 39\n│ [60 more lines]" in detail and "more characters" not in detail
+
+
+def test_shared_reports_write_the_fake_aws_key_as_its_placeholder() -> None:
+    import json
+    from pathlib import Path
+    from proving_ground import cli, report, testcalls
+    m = report.matrix_from_dict(json.loads((Path(__file__).resolve().parents[1] / "docs" / "fixture-report.json")
+                                           .read_text(encoding="utf-8")))
+    shared = cli.shareable(m)
+    for text in (cli.export_json(shared), report.render_markdown(shared), report.render_html(shared)):
+        assert testcalls.FAKE_AWS_KEY_ID not in text
+    assert "{FAKE_AWS_KEY_ID}" in cli.export_json(shared)
