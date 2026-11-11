@@ -743,8 +743,9 @@ def warm_failure(run: CellRun) -> safety.Refusal:
                           f"rerun `hermes provingground warm`." + (f" Last output: {tail}" if tail else ""))
 
 # File: proving_ground/runner.py  (part 5 of 5: subjects, columns, the drill)
-# enabled list at plugins.enabled and user plugins under <HERMES_HOME>/plugins/<key> (registry key = dir
-# name, hermes_cli/plugins_manifest.py:378); load order alphabetical by key with requires_plugins first
+# enabled list at plugins.enabled and user plugins under <HERMES_HOME>/plugins/<key> (a flat plugin's registry key is
+# its manifest name, hermes_cli/plugins_manifest.py:562-563; a subject whose name differs from its directory is not
+# confirmed loaded and shows LOAD FAILED); load order alphabetical by key with requires_plugins first
 # (plugins_manifest.py:246-283). `hermes --version` prints "Hermes Agent v0.23.1 (2026.9.24) · stable · local 3b4215785882" (observed).
 # Assumption: pip/entry-point plugins have no directory and are reported as skipped (LIMITATIONS.md).
 

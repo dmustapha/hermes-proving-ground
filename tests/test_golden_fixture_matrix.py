@@ -30,6 +30,17 @@ SNAPSHOT = {"TC01": (P, P, P, P, P),
             "TC09": (P, P, P, P, P),
             "TC10": (A, A, A, A, A)}  # core approval gate
 CORE = {("TC05", c) for c in COLUMNS} | {("TC10", c) for c in COLUMNS}
+# Liveness of every PASSED THROUGH cell outside the baseline: fx_trimmer's transform_terminal_output never fires on
+# the three file-tool calls, so those cells are "not invoked"; every other one ran and changed nothing.
+NOT_INVOKED = {("TC06", "solo:fx_trimmer"), ("TC07", "solo:fx_trimmer"), ("TC08", "solo:fx_trimmer")}
+FIRED = {"fx_guard": ("hook pre_tool_call",), "fx_rewriter": ("hook pre_tool_call",),
+         "fx_trimmer": ("hook transform_terminal_output",)}
+
+
+def liveness_of(primary: str, column: str, cid: str) -> str:
+    if primary != Outcome.PASSED_THROUGH.value or column == "baseline":
+        return ""
+    return "not invoked" if (cid, column) in NOT_INVOKED else "ran, no change"
 
 
 @pytest.fixture(scope="module")
@@ -52,6 +63,15 @@ def test_full_matrix_snapshot(drill) -> None:
     assert {(cid, col) for (col, cid), cell in m.cells.items() if cell.core} == CORE
     assert m.aborted == {} and m.load_failed == {} and m.unstable == frozenset()
     assert [f.kind for f in m.findings] == ["REWRITE_UNSEEN_BY"]
+
+
+@pytest.mark.hermes
+def test_liveness_labels_and_census_snapshot(drill) -> None:
+    _run, m = drill
+    assert {(cid, col): m.cell(col, cid).liveness for col in COLUMNS for cid in CALLS} == \
+        {(cid, col): liveness_of(m.cell(col, cid).primary.value, col, cid) for col in COLUMNS for cid in CALLS}
+    assert {k: c.fired for k, c in m.census.items()} == FIRED
+    assert all(c.watched and not c.late and not c.inner for c in m.census.values())
 
 
 @pytest.mark.hermes
