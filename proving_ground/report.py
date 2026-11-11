@@ -1,6 +1,6 @@
 # File: proving_ground/report.py  (part 1 of 3: wording, JSON serialization)
-# [VERIFIED] rich==14.3.4 is pinned in Hermes core (pyproject.toml:52); rich.table.Table / rich.console.Console are its
-# public API. [VERIFIED by the §9.1 run] rendering logic. Pure: returns strings, never writes files.
+# rich==14.3.4 is pinned in Hermes core (pyproject.toml:52); rich.table.Table / rich.console.Console are its
+# public API. Pure: returns strings, never writes files.
 """Render a Matrix as a terminal table, Markdown, self-contained HTML, JSON, or one cell's detail."""
 from __future__ import annotations
 
@@ -8,12 +8,13 @@ import difflib
 import html
 import io
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Mapping, Sequence
 
 from . import matrix as mx
 
 REPORT_SCHEMA = "provingground.report.v1"
+GENERATOR = "proving-ground 0.1.0"  # plugin.yaml version; tests/test_report_loading.py keeps them equal
 HEADLINE = "PROVING GROUND · a wiring test for your plugin stack"
 OBSERVED = "Observed on {n} synthetic inputs in a sandbox."
 SCOPE_NOTE = ("This report describes what your plugins did to these specific test calls. "
@@ -42,7 +43,7 @@ def strip_quoted(text: str) -> str:
 
 
 def forbidden_claims(text: str) -> list[str]:
-    """Forbidden grading words in PROVING GROUND's own words; quoted plugin output is exempt (PRD-F12)."""
+    """Forbidden grading words in PROVING GROUND's own words; quoted plugin output is exempt."""
     own = strip_quoted(text)
     return [p.pattern for p in FORBIDDEN_CLAIMS if p.search(own)]
 
@@ -93,6 +94,25 @@ def notable_cells(m: mx.Matrix) -> list[str]:
             + (f"  ({_source(m, c)})" if _source(m, c) else "") for c in cells]
 
 
+def path_rules(paths: Mapping[str, str]) -> list[tuple[re.Pattern[str], str]]:
+    """{path: token} as whole-path patterns, longest first (a temp dir under home is replaced before home)."""
+    ordered = sorted((p for p in paths if len(p) > 1), key=len, reverse=True)
+    return [(re.compile(re.escape(p) + r"(?![A-Za-z0-9_.-])"), paths[p]) for p in ordered]
+
+
+def scrub_paths(value: Any, rules: Sequence[tuple[re.Pattern[str], str]]) -> Any:
+    """Replace private paths in every string of a JSON-shaped value (keys are left alone)."""
+    if isinstance(value, str):
+        for pattern, token in rules:
+            value = pattern.sub(token, value)
+        return value
+    if isinstance(value, dict):
+        return {k: scrub_paths(v, rules) for k, v in value.items()}
+    if isinstance(value, list):
+        return [scrub_paths(v, rules) for v in value]
+    return value
+
+
 def matrix_to_dict(m: mx.Matrix) -> dict[str, Any]:
     cells = [{"column": c.column, "call_id": c.call_id, "outcomes": [o.value for o in c.outcomes],
               "primary": c.primary.value, "hop": c.hop, "core": c.core, "core_also": c.core_also,
@@ -100,7 +120,8 @@ def matrix_to_dict(m: mx.Matrix) -> dict[str, Any]:
               "provenance": provenance(c.column)}
              for c in m.cells.values()]
     calls = [{**asdict(c), "expect": {k: list(v) for k, v in (c.expect or {}).items()}} for c in m.calls]
-    return {"schema": REPORT_SCHEMA, "headline": HEADLINE, "observed": OBSERVED.format(n=m.conditions.n_calls),
+    return {"schema": REPORT_SCHEMA, "generator": GENERATOR, "headline": HEADLINE,
+            "observed": OBSERVED.format(n=m.conditions.n_calls),
             "tally": mx.tally(m), "conditions": asdict(m.conditions), "calls": calls,
             "columns": list(m.columns), "cells": cells,
             "attributions": [{**asdict(a), "outcome": a.outcome.value} for a in m.attributions],
@@ -118,19 +139,27 @@ def _cell_from(raw: Mapping[str, Any]) -> mx.Cell:
                    bool(raw.get("core_also")))
 
 
+def _known(cls: type, raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Only the fields this version knows: a report written by a newer version (one extra key) still loads."""
+    names = {f.name for f in fields(cls)}
+    return {k: v for k, v in raw.items() if k in names}
+
+
 def _call_from(raw: Mapping[str, Any]) -> mx.CallInfo:
-    return mx.CallInfo(**{**raw, "expect": {k: tuple(v) for k, v in (raw.get("expect") or {}).items()}})
+    return mx.CallInfo(**{**_known(mx.CallInfo, raw),
+                          "expect": {k: tuple(v) for k, v in (raw.get("expect") or {}).items()}})
 
 
 def _obs_from(raw: Mapping[str, Any]) -> mx.CallObservation:
-    return mx.CallObservation(**{**raw, "escaped_reasons": tuple(raw.get("escaped_reasons") or ())})
+    return mx.CallObservation(**{**_known(mx.CallObservation, raw),
+                                 "escaped_reasons": tuple(raw.get("escaped_reasons") or ())})
 
 
 def matrix_from_dict(data: Mapping[str, Any]) -> mx.Matrix:
-    if data.get("schema") != REPORT_SCHEMA:
+    if not isinstance(data, Mapping) or data.get("schema") != REPORT_SCHEMA:
         raise ValueError(f"not a {REPORT_SCHEMA} document")
     cond = data["conditions"]
-    conditions = mx.DrillConditions(**{**cond, "load_order": tuple(cond["load_order"])})
+    conditions = mx.DrillConditions(**{**_known(mx.DrillConditions, cond), "load_order": tuple(cond["load_order"])})
     cells = {(c["column"], c["call_id"]): _cell_from(c) for c in data["cells"]}
     attributions = tuple(mx.Attribution(a["call_id"], mx.Outcome(a["outcome"]), a["kind"], tuple(a["plugins"]),
                                         a.get("note", "")) for a in data["attributions"])
@@ -187,8 +216,17 @@ def _outcome_columns_width(columns: Sequence[str]) -> int:
     return sum(words) + 3 * len(columns) + 2  # 2 padding + 1 separator per column, 2 edge characters
 
 
+def display_order(columns: Sequence[str], width: int) -> list[str]:
+    """When every column cannot fit, FULL STACK moves next to the baseline so the column the report exists for
+    is never the one cropped; the solos follow."""
+    if "stack" not in columns or _outcome_columns_width(columns) <= width - 24:
+        return list(columns)
+    return [c for c in columns if c == "baseline"] + ["stack"] + [c for c in columns if c not in ("baseline", "stack")]
+
+
 def _print_table(console: Any, calls: Sequence[mx.CallInfo], columns: Sequence[str],
                  cells: Mapping[tuple[str, str], mx.Cell]) -> None:
+    columns = display_order(columns, console.width)
     longest_call = max([len("test call")] + [len(f"{c.id} {c.subject}") for c in calls])
     budget = console.width - _outcome_columns_width(columns)
     call_width = None if longest_call <= budget else max(8, budget)
@@ -386,6 +424,8 @@ def _html_cell(m: mx.Matrix, column: str, call_id: str) -> str:
     cell = m.cells.get((column, call_id))
     if cell is None:
         return "<td>pending</td>"
+    if column not in m.observations or call_id not in m.observations[column]:  # N/A: no detail panel to link
+        return f'<td><span class="{cell.primary.value}">{html.escape(cell_label(cell))}</span></td>'
     return (f'<td><a class="{cell.primary.value}" href="#{_anchor(column, call_id)}">'
             f"{html.escape(cell_label(cell))}</a></td>")
 
@@ -410,7 +450,8 @@ def render_html(m: mx.Matrix) -> str:
     head = "".join(f"<th>{html.escape(column_title(n))}</th>" for n in m.columns)
     rows = "".join(f"<tr><th>{html.escape(c.id)} <span class='muted'>{html.escape(c.subject)}</span></th>"
                    + "".join(_html_cell(m, n, c.id) for n in m.columns) + "</tr>" for c in m.calls)
-    panels = "".join(_html_panel(m, col, cid) for (col, cid) in m.cells if col in m.observations)
+    panels = "".join(_html_panel(m, col, cid) for (col, cid) in m.cells
+                     if col in m.observations and cid in m.observations[col])
     footer = "".join(f"<li>{html.escape(x.lstrip('• '))}</li>" for x in _footer_lines(m) if x != SCOPE_NOTE)
     cond = "".join(f"<li>{html.escape(x)}</li>" for x in conditions_lines(m))
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'

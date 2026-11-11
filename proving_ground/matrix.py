@@ -1,5 +1,5 @@
 # File: proving_ground/matrix.py  (part 1 of 3: types and normalization)
-# [VERIFIED by the §9.1 run] pure logic over the event format of §3.5. Phrases cited inline are [VERIFIED] at their file:line.
+# Pure logic over the child's events.jsonl format (proving_ground/observer.py). Hermes phrases are cited at their file:line.
 """Pure core: observations, outcome classification, attribution, findings. No I/O, no Hermes imports."""
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Any, Mapping, Sequence
 TIMEOUT_BLOCK_MESSAGE = "pre_tool_call plugin callback timed out or is still running"  # plugins_dispatch.py:67
 RAISED_BLOCK = re.compile(r"^pre_tool_call plugin callback \S+ raised ")  # plugins_dispatch.py:89-95 (fail-closed crash)
 HARNESS_PREFIX = "PROVINGGROUND:"
-APPROVAL_PHRASES = ("runs without a user present to approve it", "Command denied")  # approval.py:703, P4
+APPROVAL_PHRASES = ("runs without a user present to approve it", "Command denied")  # tools/approval.py:703
 VOLATILE_KEYS = frozenset({"duration", "duration_ms", "elapsed", "elapsed_ms", "started_at", "finished_at", "wall_time",
                            "full_output_path"})  # spill-file path, tools/terminal_tool_result.py:193
 CORE_TRUNCATION_KEY = "truncation_note"  # core head+tail capture window, tools/terminal_tool_result.py:193
@@ -41,6 +41,8 @@ LABELS: dict[Outcome, str] = {
     Outcome.LOAD_FAILED: "LOAD FAILED", Outcome.NOT_RUN: "NOT RUN", Outcome.NOT_APPLICABLE: "N/A",
 }
 QUIET = frozenset({Outcome.PASSED_THROUGH, Outcome.LOAD_FAILED, Outcome.NOT_RUN, Outcome.NOT_APPLICABLE})
+# A stack cell with one of these says nothing about what reached the model, so no solo effect can be "masked" by it.
+NO_STACK_RESULT = frozenset({Outcome.LOAD_FAILED, Outcome.NOT_RUN, Outcome.NOT_APPLICABLE, Outcome.ERRORED})
 VERBS: dict[Outcome, str] = {Outcome.BLOCKED: "blocks", Outcome.APPROVAL_GATED: "sends to approval"}
 
 
@@ -199,7 +201,7 @@ CALL_EVENTS = ("pre_tool_call", "terminal_raw", "tool_raw", "post_tool_call", "e
 def _slots(plan_calls: Sequence[Mapping[str, Any]], events: Sequence[Mapping[str, Any]]
            ) -> tuple[dict[str, dict[str, Any]], list[Mapping[str, Any]]]:
     """Attach each call event to its drill call by tool_call_id only; return the events that match none (stray).
-    Never by call order: a plugin that adds or drops a call would shift every later call (perspective point 4)."""
+    Never by call order: a plugin that adds or drops a call would shift every later call."""
     ref_to_id = {str(c["call_ref"]): str(c["id"]) for c in plan_calls}
     slots: dict[str, dict[str, Any]] = {str(c["id"]): {} for c in plan_calls}
     stray: list[Mapping[str, Any]] = []
@@ -224,7 +226,7 @@ def _observation(call: Mapping[str, Any], slot: Mapping[str, Any], sandbox: str,
                  recorded: Sequence[str]) -> CallObservation:
     pre, post = slot.get("pre_tool_call") or {}, slot.get("post_tool_call") or {}
     terminal, tool_raw = slot.get("terminal_raw") or {}, slot.get("tool_raw") or {}
-    injected = normalize_value(call.get("args") or {}, sandbox, url)  # the plan is authoritative (ARCH-F7)
+    injected = normalize_value(call.get("args") or {}, sandbox, url)  # the plan is authoritative
     pre_seen = normalize_value(pre.get("args") or {}, sandbox, url) if pre else {}
     return CallObservation(
         call_id=str(call["id"]), tool=str(call["tool"]), ran="post_tool_call" in slot,
@@ -397,7 +399,7 @@ def _lost(cid: str, stack_cell: Cell, solos: Mapping[str, Mapping[str, Cell]]) -
 
 def _grouped_mask(cid: str, gate: Outcome, lost: Sequence[tuple[str, Outcome]],
                   attributions: Sequence[Attribution]) -> Finding:
-    """One finding per blocker x call: the other plugins' effects are consequences of one block (point b)."""
+    """One finding per blocker x call: the other plugins' effects are consequences of one block."""
     blockers = next((a.plugins for a in attributions if a.call_id == cid and a.outcome is gate), ())
     masked = tuple(dict.fromkeys(k for k, _o in lost if k not in blockers))
     effects = ", ".join(f"{k} {LABELS[o]}" for k, o in lost)
@@ -410,6 +412,8 @@ def _masked(stack: Mapping[str, Cell], solos: Mapping[str, Mapping[str, Cell]],
             attributions: Sequence[Attribution] = ()) -> list[Finding]:
     found = []
     for cid, stack_cell in stack.items():
+        if stack_cell.primary in NO_STACK_RESULT:
+            continue
         lost = _lost(cid, stack_cell, solos)
         if lost and stack_cell.primary in GATES and not stack_cell.core:
             found.append(_grouped_mask(cid, stack_cell.primary, lost, attributions))
@@ -446,7 +450,7 @@ def _escapes(columns: Sequence[ColumnRun]) -> list[Finding]:
 
 
 def _load_failed_cell(cell: Cell, col: ColumnRun) -> Cell:
-    """Survivor: a plugin not positively confirmed loaded is never rendered as PASSED THROUGH."""
+    """Release rule: a plugin not positively confirmed loaded is never rendered as PASSED THROUGH."""
     note = f"not confirmed loaded in the child: {', '.join(col.load_failed)}"
     if col.name.startswith("solo:") or cell.primary in QUIET:
         return Cell(cell.column, cell.call_id, (Outcome.LOAD_FAILED,), note=note)
@@ -525,11 +529,17 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
+def distinct_effects(m: Matrix) -> frozenset[tuple[str, Outcome]]:
+    """Each (call, outcome) a plugin produced, counted once however many columns show it (a solo effect that also
+    appears in the full stack is one effect, not two). Core effects and the baseline are not plugin effects."""
+    return frozenset((cid, outcome) for (col, cid), cell in m.cells.items() if col != "baseline" and not cell.core
+                     for outcome in cell.outcomes if outcome not in QUIET)
+
+
 def tally(m: Matrix) -> str:
-    behaviours = sum(1 for (col, _c), cell in m.cells.items()
-                     if col != "baseline" and cell.primary not in QUIET and not cell.core)
     return (f"{_plural(m.conditions.n_calls, 'test call')} · {_plural(m.conditions.n_plugins, 'plugin')} · "
-            f"{_plural(behaviours, 'behaviour')} recorded · {_plural(len(m.findings), 'cross-plugin finding')}")
+            f"{_plural(len(distinct_effects(m)), 'distinct effect')} recorded · "
+            f"{_plural(len(m.findings), 'cross-plugin finding')}")
 
 
 def check_expectations(m: Matrix) -> tuple[list[tuple[str, str, tuple[str, ...], str]], list[tuple[str, str]]]:

@@ -1,4 +1,4 @@
-# Debug P2 (perspective point 1, TC05): a plugin column is diffed against the baseline's DELIVERED result, and a
+# TC05: a plugin column is diffed against the baseline's DELIVERED result, and a
 # Hermes-core change of the output is labelled the same way in every column ("core" or "core + plugin").
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def test_fixture_tc05_renders_consistently_across_columns() -> None:
     m = fixture_like_matrix()
     labels = {name: report.cell_label(m.cell(name, "TC05")) for name in m.columns}
     assert set(labels.values()) == {"RESULT CHANGED (core)"}, labels
-    assert matrix.tally(m).endswith("6 behaviours recorded · 1 cross-plugin finding")
+    assert matrix.tally(m).endswith("3 distinct effects recorded · 1 cross-plugin finding")
 
 
 def test_plugin_trim_hidden_by_core_only_stack_is_masked() -> None:
