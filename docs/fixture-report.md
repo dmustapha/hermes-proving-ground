@@ -14,7 +14,7 @@
 - load order given to the child (requires_plugins first, then alphabetical): fx_guard, fx_rewriter, fx_trimmer
 - coverage: executed: 3 · unavailable (requires_env): 0 · dependency-skipped / not a directory plugin: 0 · load-failed: 0
 - cleanup: 0 drill processes, 0 drill roots left after the run
-- wall time: 18.4s · started 2026-11-11T03:34:47+00:00
+- wall time: 18.3s · started 2026-11-11T04:07:36+00:00
 
 ## Matrix
 
@@ -24,7 +24,7 @@
 | TC02 guard-marked command | PASSED THROUGH | BLOCKED | PASSED THROUGH | PASSED THROUGH | BLOCKED |
 | TC03 rewrite candidate | PASSED THROUGH | PASSED THROUGH | REWROTE | PASSED THROUGH | REWROTE |
 | TC04 test log with a FAILED line | PASSED THROUGH | PASSED THROUGH | PASSED THROUGH | RESULT CHANGED | RESULT CHANGED |
-| TC05 long output | RESULT CHANGED (core) | PASSED THROUGH | PASSED THROUGH | PASSED THROUGH | PASSED THROUGH |
+| TC05 long output | RESULT CHANGED (core) | RESULT CHANGED (core) | RESULT CHANGED (core) | RESULT CHANGED (core) | RESULT CHANGED (core) |
 | TC06 file write | PASSED THROUGH | PASSED THROUGH | PASSED THROUGH | PASSED THROUGH | PASSED THROUGH |
 | TC07 file read with canary | PASSED THROUGH | PASSED THROUGH | PASSED THROUGH | PASSED THROUGH | PASSED THROUGH |
 | TC08 file patch | PASSED THROUGH | PASSED THROUGH | PASSED THROUGH | PASSED THROUGH | PASSED THROUGH |
@@ -37,6 +37,7 @@
 - attribution TC02 BLOCKED: solo-match — observed in one solo run: fx_guard (stateful plugins may differ between runs)
 - attribution TC03 REWROTE: solo-match — observed in one solo run: fx_rewriter (stateful plugins may differ between runs)
 - attribution TC04 RESULT CHANGED: solo-match — observed in one solo run: fx_trimmer (stateful plugins may differ between runs)
+- attribution TC05 RESULT CHANGED: core — the zero-plugin baseline shows the same effect
 - attribution TC10 APPROVAL-GATED: core — the zero-plugin baseline shows the same effect
 - This report describes what your plugins did to these specific test calls. It does not grade your stack, and results depend on each plugin's configuration.
 - Detail: hermes provingground show <CALL> --column <COLUMN>

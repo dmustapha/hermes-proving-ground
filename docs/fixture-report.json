@@ -14,8 +14,8 @@
     ],
     "connects_total": 120,
     "connects_non_loopback": 0,
-    "wall_s": 18.425988625036553,
-    "started_at": "2026-11-11T03:34:47+00:00",
+    "wall_s": 18.338213042006828,
+    "started_at": "2026-11-11T04:07:36+00:00",
     "model": "NOT CALLED (scripted turn: 61 llm_execution steps answered by PROVING GROUND, 0 provider calls)",
     "provider": "none (closed loopback 127.0.0.1:9)",
     "approvals": "mode manual, single_query_mode deny, cron_mode deny, unattended_mode deny (headless child: every approval is denied)",
@@ -24,7 +24,8 @@
     "leftover_processes": 0,
     "leftover_roots": 0,
     "coverage": "executed: 3 · unavailable (requires_env): 0 · dependency-skipped / not a directory plugin: 0 · load-failed: 0",
-    "baseline_note": "baseline = Hermes core with only PROVING GROUND enabled (bundled plugins not enumerated)"
+    "baseline_note": "baseline = Hermes core with only PROVING GROUND enabled (bundled plugins not enumerated)",
+    "order_note": ""
   },
   "calls": [
     {
@@ -125,6 +126,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "baseline"
@@ -138,6 +140,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "baseline"
@@ -151,6 +154,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "baseline"
@@ -164,6 +168,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "baseline"
@@ -177,6 +182,7 @@
       "primary": "RESULT_CHANGED",
       "hop": "core",
       "core": true,
+      "core_also": false,
       "unstable": false,
       "note": "Hermes core changed the output (for example truncation); no plugin involved",
       "provenance": "baseline"
@@ -190,6 +196,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "baseline"
@@ -203,6 +210,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "baseline"
@@ -216,6 +224,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "baseline"
@@ -229,6 +238,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "baseline"
@@ -242,6 +252,7 @@
       "primary": "APPROVAL_GATED",
       "hop": null,
       "core": true,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "baseline"
@@ -255,6 +266,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -268,6 +280,7 @@
       "primary": "BLOCKED",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -281,6 +294,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -294,6 +308,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -302,13 +317,14 @@
       "column": "solo:fx_guard",
       "call_id": "TC05",
       "outcomes": [
-        "PASSED_THROUGH"
+        "RESULT_CHANGED"
       ],
-      "primary": "PASSED_THROUGH",
-      "hop": null,
-      "core": false,
+      "primary": "RESULT_CHANGED",
+      "hop": "core",
+      "core": true,
+      "core_also": false,
       "unstable": false,
-      "note": "",
+      "note": "Hermes core changed the output (for example truncation); no plugin involved",
       "provenance": "solo"
     },
     {
@@ -320,6 +336,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -333,6 +350,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -346,6 +364,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -359,6 +378,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -372,6 +392,7 @@
       "primary": "APPROVAL_GATED",
       "hop": null,
       "core": true,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -385,6 +406,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -398,6 +420,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -411,6 +434,7 @@
       "primary": "REWROTE",
       "hop": "args",
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -424,6 +448,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -432,13 +457,14 @@
       "column": "solo:fx_rewriter",
       "call_id": "TC05",
       "outcomes": [
-        "PASSED_THROUGH"
+        "RESULT_CHANGED"
       ],
-      "primary": "PASSED_THROUGH",
-      "hop": null,
-      "core": false,
+      "primary": "RESULT_CHANGED",
+      "hop": "core",
+      "core": true,
+      "core_also": false,
       "unstable": false,
-      "note": "",
+      "note": "Hermes core changed the output (for example truncation); no plugin involved",
       "provenance": "solo"
     },
     {
@@ -450,6 +476,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -463,6 +490,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -476,6 +504,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -489,6 +518,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -502,6 +532,7 @@
       "primary": "APPROVAL_GATED",
       "hop": null,
       "core": true,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -515,6 +546,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -528,6 +560,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -541,6 +574,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -554,6 +588,7 @@
       "primary": "RESULT_CHANGED",
       "hop": "terminal_output",
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -562,13 +597,14 @@
       "column": "solo:fx_trimmer",
       "call_id": "TC05",
       "outcomes": [
-        "PASSED_THROUGH"
+        "RESULT_CHANGED"
       ],
-      "primary": "PASSED_THROUGH",
-      "hop": null,
-      "core": false,
+      "primary": "RESULT_CHANGED",
+      "hop": "core",
+      "core": true,
+      "core_also": false,
       "unstable": false,
-      "note": "",
+      "note": "Hermes core changed the output (for example truncation); no plugin involved",
       "provenance": "solo"
     },
     {
@@ -580,6 +616,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -593,6 +630,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -606,6 +644,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -619,6 +658,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -632,6 +672,7 @@
       "primary": "APPROVAL_GATED",
       "hop": null,
       "core": true,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "solo"
@@ -645,6 +686,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "stack"
@@ -658,6 +700,7 @@
       "primary": "BLOCKED",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "stack"
@@ -671,6 +714,7 @@
       "primary": "REWROTE",
       "hop": "args",
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "stack"
@@ -684,6 +728,7 @@
       "primary": "RESULT_CHANGED",
       "hop": "terminal_output",
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "stack"
@@ -692,13 +737,14 @@
       "column": "stack",
       "call_id": "TC05",
       "outcomes": [
-        "PASSED_THROUGH"
+        "RESULT_CHANGED"
       ],
-      "primary": "PASSED_THROUGH",
-      "hop": null,
-      "core": false,
+      "primary": "RESULT_CHANGED",
+      "hop": "core",
+      "core": true,
+      "core_also": false,
       "unstable": false,
-      "note": "",
+      "note": "Hermes core changed the output (for example truncation); no plugin involved",
       "provenance": "stack"
     },
     {
@@ -710,6 +756,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "stack"
@@ -723,6 +770,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "stack"
@@ -736,6 +784,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "stack"
@@ -749,6 +798,7 @@
       "primary": "PASSED_THROUGH",
       "hop": null,
       "core": false,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "stack"
@@ -762,6 +812,7 @@
       "primary": "APPROVAL_GATED",
       "hop": null,
       "core": true,
+      "core_also": false,
       "unstable": false,
       "note": "",
       "provenance": "stack"
@@ -794,6 +845,13 @@
         "fx_trimmer"
       ],
       "note": "observed in one solo run: fx_trimmer (stateful plugins may differ between runs)"
+    },
+    {
+      "call_id": "TC05",
+      "outcome": "RESULT_CHANGED",
+      "kind": "core",
+      "plugins": [],
+      "note": "the zero-plugin baseline shows the same effect"
     },
     {
       "call_id": "TC10",
@@ -932,11 +990,11 @@
         "ran": true,
         "injected_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-228dddd8af263e67\n"
+          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
         },
         "final_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-228dddd8af263e67\n"
+          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
         },
         "status": "ok",
         "error_type": null,
@@ -948,7 +1006,7 @@
         "escaped_reasons": [],
         "pre_seen_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-228dddd8af263e67\n"
+          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
         }
       },
       "TC07": {
@@ -965,8 +1023,8 @@
         "error_type": null,
         "error_message": null,
         "terminal_raw": null,
-        "tool_raw": "{\"content\": \"1|canary line PGCANARY-228dddd8af263e67\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
-        "delivered": "{\"content\": \"1|canary line PGCANARY-228dddd8af263e67\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "tool_raw": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "delivered": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
         "recorded": false,
         "escaped_reasons": [],
         "pre_seen_args": {
@@ -1163,11 +1221,11 @@
         "ran": true,
         "injected_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-228dddd8af263e67\n"
+          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
         },
         "final_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-228dddd8af263e67\n"
+          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
         },
         "status": "ok",
         "error_type": null,
@@ -1179,7 +1237,7 @@
         "escaped_reasons": [],
         "pre_seen_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-228dddd8af263e67\n"
+          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
         }
       },
       "TC07": {
@@ -1196,8 +1254,8 @@
         "error_type": null,
         "error_message": null,
         "terminal_raw": null,
-        "tool_raw": "{\"content\": \"1|canary line PGCANARY-228dddd8af263e67\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
-        "delivered": "{\"content\": \"1|canary line PGCANARY-228dddd8af263e67\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "tool_raw": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "delivered": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
         "recorded": false,
         "escaped_reasons": [],
         "pre_seen_args": {
@@ -1394,11 +1452,11 @@
         "ran": true,
         "injected_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-228dddd8af263e67\n"
+          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
         },
         "final_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-228dddd8af263e67\n"
+          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
         },
         "status": "ok",
         "error_type": null,
@@ -1410,7 +1468,7 @@
         "escaped_reasons": [],
         "pre_seen_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-228dddd8af263e67\n"
+          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
         }
       },
       "TC07": {
@@ -1427,8 +1485,8 @@
         "error_type": null,
         "error_message": null,
         "terminal_raw": null,
-        "tool_raw": "{\"content\": \"1|canary line PGCANARY-228dddd8af263e67\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
-        "delivered": "{\"content\": \"1|canary line PGCANARY-228dddd8af263e67\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "tool_raw": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "delivered": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
         "recorded": false,
         "escaped_reasons": [],
         "pre_seen_args": {
@@ -1625,11 +1683,11 @@
         "ran": true,
         "injected_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-228dddd8af263e67\n"
+          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
         },
         "final_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-228dddd8af263e67\n"
+          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
         },
         "status": "ok",
         "error_type": null,
@@ -1641,7 +1699,7 @@
         "escaped_reasons": [],
         "pre_seen_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-228dddd8af263e67\n"
+          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
         }
       },
       "TC07": {
@@ -1658,8 +1716,8 @@
         "error_type": null,
         "error_message": null,
         "terminal_raw": null,
-        "tool_raw": "{\"content\": \"1|canary line PGCANARY-228dddd8af263e67\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
-        "delivered": "{\"content\": \"1|canary line PGCANARY-228dddd8af263e67\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "tool_raw": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "delivered": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
         "recorded": false,
         "escaped_reasons": [],
         "pre_seen_args": {
@@ -1856,11 +1914,11 @@
         "ran": true,
         "injected_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-228dddd8af263e67\n"
+          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
         },
         "final_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-228dddd8af263e67\n"
+          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
         },
         "status": "ok",
         "error_type": null,
@@ -1872,7 +1930,7 @@
         "escaped_reasons": [],
         "pre_seen_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-228dddd8af263e67\n"
+          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
         }
       },
       "TC07": {
@@ -1889,8 +1947,8 @@
         "error_type": null,
         "error_message": null,
         "terminal_raw": null,
-        "tool_raw": "{\"content\": \"1|canary line PGCANARY-228dddd8af263e67\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
-        "delivered": "{\"content\": \"1|canary line PGCANARY-228dddd8af263e67\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "tool_raw": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "delivered": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
         "recorded": false,
         "escaped_reasons": [],
         "pre_seen_args": {

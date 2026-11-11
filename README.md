@@ -26,7 +26,7 @@ Before the catalog entry is merged, install from the Git URL (`hermes plugins in
 Run `hermes provingground` without `--fixtures` to test the directory plugins enabled in your own Hermes home. Verified on Hermes v0.23.1, macOS.
 
 ## The fixture drill
-The committed report [docs/fixture-report.md](docs/fixture-report.md) (JSON: [docs/fixture-report.json](docs/fixture-report.json), HTML: [docs/fixture-report.html](docs/fixture-report.html)) is one run of `hermes provingground --fixtures` on Hermes v0.23.1: `10 test calls · 3 plugins · 6 behaviours recorded · 1 cross-plugin finding`, `model: NOT CALLED (scripted turn: 61 llm_execution steps answered by PROVING GROUND, 0 provider calls)`, 18.4 s on a warm cache. The three demo plugins are the author's own fixtures (`fixtures/`), written to show one Hermes merge rule each.
+The committed report [docs/fixture-report.md](docs/fixture-report.md) (JSON: [docs/fixture-report.json](docs/fixture-report.json), HTML: [docs/fixture-report.html](docs/fixture-report.html)) is one run of `hermes provingground --fixtures` on Hermes v0.23.1: `10 test calls · 3 plugins · 6 behaviours recorded · 1 cross-plugin finding`, `model: NOT CALLED (scripted turn: 61 llm_execution steps answered by PROVING GROUND, 0 provider calls)`, 18.3 s on a warm cache. The three demo plugins are the author's own fixtures (`fixtures/`), written to show one Hermes merge rule each.
 
 ![The fixture matrix in the terminal](docs/matrix.png)
 
