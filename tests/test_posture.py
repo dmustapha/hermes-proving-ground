@@ -72,5 +72,7 @@ def test_slash_refuses_under_yolo_and_never_warms(monkeypatch) -> None:
     monkeypatch.setenv("HERMES_YOLO_MODE", "1")
     assert cli.handle_slash("fixtures", platform="cli").startswith("REFUSED_YOLO")
     monkeypatch.delenv("HERMES_YOLO_MODE")
+    # pure tier: CI has no hermes executable, and the slash path must reach the warm check without one
+    monkeypatch.setattr(cli, "find_hermes", lambda _explicit: cli.PG_SOURCE / "no-hermes-needed")
     monkeypatch.setattr(runner, "is_warm", lambda _s: False)
     assert cli.handle_slash("fixtures", platform="cli").startswith("WARM_UP_NEEDED")
