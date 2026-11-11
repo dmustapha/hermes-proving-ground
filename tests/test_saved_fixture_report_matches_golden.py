@@ -12,7 +12,7 @@ import pytest
 from test_golden_fixture_matrix import CALLS, COLUMNS, CORE, SNAPSHOT
 
 REPORT_ENV = "PG_FIXTURE_REPORT"
-GOLDEN_TALLY = "10 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding"
+GOLDEN_TALLY = "24 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding"
 
 pytestmark = pytest.mark.skipif(not os.environ.get(REPORT_ENV), reason=f"{REPORT_ENV} names no saved report")
 

@@ -15,9 +15,9 @@ from proving_ground.matrix import Outcome
 
 ROOT = Path(__file__).resolve().parent.parent
 COLUMNS = ("baseline", "solo:fx_guard", "solo:fx_rewriter", "solo:fx_trimmer", "stack")
-CALLS = tuple(f"TC{i:02d}" for i in range(1, 11))
-P, B, W, R, A = (Outcome.PASSED_THROUGH, Outcome.BLOCKED, Outcome.REWROTE, Outcome.RESULT_CHANGED,
-                 Outcome.APPROVAL_GATED)
+CALLS = tuple(f"TC{i:02d}" for i in range(1, 25))
+P, B, W, R, A, X = (Outcome.PASSED_THROUGH, Outcome.BLOCKED, Outcome.REWROTE, Outcome.RESULT_CHANGED,
+                    Outcome.APPROVAL_GATED, Outcome.NOT_EXECUTED)
 #            baseline  fx_guard  fx_rewriter  fx_trimmer  stack
 SNAPSHOT = {"TC01": (P, P, P, P, P),
             "TC02": (P, B, P, P, B),
@@ -28,8 +28,23 @@ SNAPSHOT = {"TC01": (P, P, P, P, P),
             "TC07": (P, P, P, P, P),
             "TC08": (P, P, P, P, P),
             "TC09": (P, P, P, P, P),
-            "TC10": (A, A, A, A, A)}  # core approval gate
-CORE = {("TC05", c) for c in COLUMNS} | {("TC10", c) for c in COLUMNS}
+            "TC10": (A, A, A, A, A),  # core approval gate
+            # TC11-TC24 are added rows; TC01-TC10 above are unchanged. The demo plugins act on none of them.
+            "TC11": (R, R, R, R, R),  # Hermes core strips the ANSI codes itself
+            "TC12": (P, P, P, P, P),
+            "TC13": (P, P, P, P, P),
+            "TC14": (P, P, P, P, P),
+            "TC15": (P, P, P, P, P),
+            "TC16": (R, R, R, R, R),  # Hermes core masks the documented example key itself
+            "TC17": (P, P, P, P, P),  # Hermes core refuses the .env read the same way in every column
+            "TC18": (P, P, P, P, P),
+            "TC19": (P, P, P, P, P),
+            "TC20": (P, P, P, P, P),
+            "TC21": (X, X, X, X, X),  # block-only probes: PROVING GROUND's own block, nothing ran
+            "TC22": (X, X, X, X, X),
+            "TC23": (X, X, X, X, X),
+            "TC24": (X, X, X, X, X)}
+CORE = {(cid, c) for cid in ("TC05", "TC10", "TC11", "TC16") for c in COLUMNS}
 
 
 @pytest.fixture(scope="module")

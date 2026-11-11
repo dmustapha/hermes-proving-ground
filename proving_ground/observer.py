@@ -3,6 +3,9 @@
 # transform_terminal_output(command, output, returncode, task_id, env_type, tool_call_id) tools/terminal_tool_result.py:144-146;
 # transform_tool_result(tool_name, args, result, <call ids>, duration_ms, status, error_type, error_message) model_tools.py:880-883;
 # post_tool_call(tool_name, args, result, <call ids>, duration_ms, status, error_type, error_message) model_tools.py:715-718.
+# pre_verify(session_id, platform, model, coding, attempt, final_response, changed_paths) hermes_cli/plugins.py:1246-1249,
+# called after a turn's file edits (agent/turn_stop_gates.py:53-76). A blocked call still gets its post_tool_call, with
+# status "blocked" and any modify-merged args (agent/tool_executor.py:648-659, :702-735).
 # None-returning transform hooks observe raw values; post_tool_call args are the final effective args (both observed
 # in probe runs). The injected tool_call id reaches every call hook as tool_call_id; matrix.py treats
 # an event whose id matches no drill call as TOOL_CALL_ID_MISMATCH (never matched by order).

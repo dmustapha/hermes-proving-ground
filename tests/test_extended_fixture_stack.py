@@ -19,9 +19,9 @@ from proving_ground.matrix import Outcome
 ROOT = Path(__file__).resolve().parent.parent
 EXTENDED = ROOT / "fixtures" / "extended"
 COLUMNS = ("baseline", "solo:fx_guard", "solo:fx_redactor", "solo:fx_rewriter", "solo:fx_trimmer", "stack")
-CALLS = tuple(f"TC{i:02d}" for i in range(1, 11))
-P, B, W, R, A = (Outcome.PASSED_THROUGH, Outcome.BLOCKED, Outcome.REWROTE, Outcome.RESULT_CHANGED,
-                 Outcome.APPROVAL_GATED)
+CALLS = tuple(f"TC{i:02d}" for i in range(1, 25))
+P, B, W, R, A, X = (Outcome.PASSED_THROUGH, Outcome.BLOCKED, Outcome.REWROTE, Outcome.RESULT_CHANGED,
+                    Outcome.APPROVAL_GATED, Outcome.NOT_EXECUTED)
 #            baseline  fx_guard  fx_redactor  fx_rewriter  fx_trimmer  stack
 SNAPSHOT = {"TC01": (P, P, R, P, P, R),
             "TC02": (P, B, P, P, P, B),
@@ -32,8 +32,12 @@ SNAPSHOT = {"TC01": (P, P, R, P, P, R),
             "TC07": (P, P, P, P, P, P),
             "TC08": (P, P, P, P, P, P),
             "TC09": (P, P, P, P, P, P),
-            "TC10": (A, A, A, A, A, A)}  # core approval gate
-CORE = {("TC05", c) for c in COLUMNS} | {("TC10", c) for c in COLUMNS}
+            "TC10": (A, A, A, A, A, A),  # core approval gate
+            # added rows (TC01-TC10 above unchanged); core strips ANSI (TC11) and masks the example key (TC16)
+            **{f"TC{i}": (R, R, R, R, R, R) for i in (11, 16)},
+            **{f"TC{i}": (P, P, P, P, P, P) for i in (12, 13, 14, 15, 17, 18, 19, 20)},
+            **{f"TC{i}": (X, X, X, X, X, X) for i in (21, 22, 23, 24)}}  # block-only probes, nothing ran
+CORE = {(cid, c) for cid in ("TC05", "TC10", "TC11", "TC16") for c in COLUMNS}
 LOAD_ORDER = ("fx_guard", "fx_redactor", "fx_rewriter", "fx_trimmer")
 
 

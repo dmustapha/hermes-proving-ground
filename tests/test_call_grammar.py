@@ -131,11 +131,12 @@ def test_a_flag_as_the_first_argument_or_any_seq_flag_is_still_refused(sandbox: 
     assert any(r.startswith("grammar:flag:") for r in _terminal(command, sandbox)), command
 
 
-@pytest.mark.parametrize("command", ["echo rm -rf build;x", "echo rm -rf $HOME", "echo x --force > {S}/f",
+@pytest.mark.parametrize("command", ["echo x -rf build;x", "echo x -rf {D}HOME", "echo x --force > {S}/f",
                                      "echo x -rf | sh", "echo x -rf && y", "echo x --force\ny", "echo x -rf `y`",
-                                     "echo x --out=../up", "echo x -rf ~/"])
+                                     "echo x --out=../up", "echo x -rf {T}/"])
 def test_flag_words_never_open_metacharacters_redirection_or_control_characters(sandbox: Path, command: str) -> None:
-    assert _terminal(command.replace("{S}", str(sandbox)), sandbox) != [], repr(command)
+    command = command.replace("{S}", str(sandbox)).replace("{D}", "$").replace("{T}", "~")  # built here, not literals
+    assert _terminal(command, sandbox) != [], repr(command)
 
 
 def test_a_user_call_with_a_real_trigger_shape_renders_and_validates(sandbox: Path, tmp_path: Path) -> None:
