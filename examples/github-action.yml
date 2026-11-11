@@ -34,10 +34,8 @@ jobs:
       - name: copy and enable your plugin
         run: |
           home="${HERMES_HOME:-$HOME/.hermes}"
-          mkdir -p "$home/plugins"
-          rm -rf "$home/plugins/$PLUGIN_NAME"
-          cp -R "$PLUGIN_DIR" "$home/plugins/$PLUGIN_NAME"
-          rm -rf "$home/plugins/$PLUGIN_NAME/.git"
+          mkdir -p "$home/plugins/$PLUGIN_NAME"
+          tar -C "$PLUGIN_DIR" --exclude=.git -cf - . | tar -C "$home/plugins/$PLUGIN_NAME" -xf -
           hermes plugins enable "$PLUGIN_NAME"
       - name: prepare the drill runtime once (Hermes's own installer, about a minute)
         run: hermes provingground warm

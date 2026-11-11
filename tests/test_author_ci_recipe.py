@@ -47,6 +47,12 @@ def test_recipe_runs_the_contract_check_on_the_declared_calls_file() -> None:
     assert 'hermes provingground --calls "$CALLS_FILE" --check' in runs
 
 
+def test_recipe_holds_no_recursive_delete() -> None:
+    """Hermes's install scan reads every file in the repo; a recursive delete in the recipe made the whole plugin
+    a dangerous verdict (destructive_home_rm) and blocked `hermes plugins install`."""
+    assert "rm -" not in RECIPE.read_text(encoding="utf-8")
+
+
 def test_ci_overrides_only_the_env_the_recipe_declares() -> None:
     declared = set(_yaml(RECIPE)["env"])
     job = _yaml(WORKFLOW)["jobs"]["author-recipe"]

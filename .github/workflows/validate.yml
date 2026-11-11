@@ -31,7 +31,8 @@ jobs:
           bash "$RUNNER_TEMP/hermes-install.sh" --commit 3b421578588243f920886e6fe79a6faa87ea026e --non-interactive --skip-browser --skip-computer-use
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: hermes --version
-      - run: hermes plugins validate . --install-deps --json | tee validate.json
+      - shell: bash  # -eo pipefail: a failed validation is not hidden by tee
+        run: hermes plugins validate . --install-deps --json | tee validate.json
       - run: for d in fixtures/*/ fixtures/extended/*/; do [ -f "$d/plugin.yaml" ] || continue; hermes plugins validate "$d"; done
       - run: hermes plugins doctor . --ci
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
