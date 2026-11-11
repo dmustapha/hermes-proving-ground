@@ -329,9 +329,9 @@ def rewrites_for_crosscheck(stack: ColumnRun) -> list[tuple[str, str, Mapping[st
 
 def _attribute_one(call_id: str, outcome: Outcome, base: Cell, solos: Mapping[str, Mapping[str, Cell]],
                    load_order: Sequence[str]) -> Attribution:
-    if outcome in base.outcomes and base.core:
+    matches = tuple(k for k in load_order if outcome in solos[k][call_id].outcomes and not solos[k][call_id].core)
+    if outcome in base.outcomes and base.core and not matches:
         return Attribution(call_id, outcome, "core", (), "the zero-plugin baseline shows the same effect")
-    matches = tuple(k for k in load_order if outcome in solos[k][call_id].outcomes)
     if outcome is Outcome.ERRORED:
         return Attribution(call_id, outcome, "errored", matches,
                            "a plugin callback raised or timed out; this is a failure, not a deliberate block")

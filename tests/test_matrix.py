@@ -139,3 +139,18 @@ def test_core_approval_gate_hidden_by_a_stack_block_is_not_masked() -> None:
     assert m.cell("solo:fx_quiet", "TC05").core
     assert primary(m, "stack", "TC05") is Outcome.BLOCKED
     assert [f for f in m.findings if f.kind == "MASKED_IN_STACK"] == []
+
+
+def test_plugin_result_change_over_core_truncation_is_attributed_to_the_plugin() -> None:
+    from helpers import column
+    from proving_ground import matrix
+
+    compact = {"TC05": {"tool_out": "[compacted: 199 lines]"}}
+    infos = [matrix.CallInfo(i, "terminal", i, i) for i in ("TC01", "TC02", "TC03", "TC04", "TC05")]
+    cols = [column("baseline", (), {}), column("solo:fx_compactor", ("fx_compactor",), compact),
+            column("solo:fx_quiet", ("fx_quiet",), {}), column("stack", ("fx_compactor", "fx_quiet"), compact)]
+    m = matrix.build_matrix(cols, None, {}, infos, "v", "t", 1.0)
+    assert m.cell("baseline", "TC05").core and primary(m, "stack", "TC05") is Outcome.RESULT_CHANGED
+    by_call = {(a.call_id, a.outcome): a for a in m.attributions}
+    assert by_call[("TC05", Outcome.RESULT_CHANGED)].kind == "solo-match"
+    assert by_call[("TC05", Outcome.RESULT_CHANGED)].plugins == ("fx_compactor",)
