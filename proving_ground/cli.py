@@ -20,7 +20,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from . import matrix, report, runner, safety, seed, testcalls
+from . import attended, matrix, report, runner, safety, seed, testcalls
 
 PG_SOURCE = Path(__file__).resolve().parent.parent
 REPORTS_SUBDIR = "reports"
@@ -528,7 +528,26 @@ def print_comparison(old: matrix.Matrix, old_name: str, new: matrix.Matrix, new_
     return CHANGED_EXIT if diff.changed else 0
 
 
+def refuse_unattended_terminal(args: argparse.Namespace) -> list[testcalls.CallTemplate]:
+    """--attended: every refusal runs before anything is spawned; returns the calls Hermes will ask about."""
+    attended.check_attended(os.environ, sys.stdin, sys.stdout)
+    check_live_posture(user_config(), None)
+    return attended.approval_templates(select_templates(args))
+
+
+def run_attended_column(args: argparse.Namespace, asked: Sequence[testcalls.CallTemplate]) -> int:
+    """The extra full-stack column after the headless matrix: Hermes asks, the person at the terminal answers."""
+    settings = build_settings(args)
+    subjects, _skipped = select_subjects(args, settings)
+    print(attended.preface(len(asked)), flush=True)
+    run = attended.run_attended(subjects, asked, settings, *attended.stdio_fds())
+    runner.reap_orphans(settings.temp_base)
+    print(attended.render_column(run, {t.id: t.subject for t in asked}), flush=True)
+    return attended.exit_code(run)
+
+
 def cmd_run(args: argparse.Namespace) -> int:
+    asked = refuse_unattended_terminal(args) if getattr(args, "attended", False) else None
     runner.install_cancellation()  # SIGINT, SIGTERM, SIGHUP: stop queued columns, kill every child
     earlier = earlier_report(args)
     m, note = _live_run(args) if not args.quiet else run_matrix(args)
@@ -546,7 +565,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     changed = print_comparison(*earlier, shareable(m), "this drill") if earlier else 0
     if compares_latest(args) and earlier is None:
         print(NO_EARLIER_REPORT)
-    return exit_code_for(m, bool(getattr(args, "check", False))) or changed
+    attended_code = run_attended_column(args, asked) if asked is not None else 0
+    return exit_code_for(m, bool(getattr(args, "check", False))) or attended_code or changed
 
 
 def notable_text(m: matrix.Matrix) -> str:
@@ -632,6 +652,8 @@ def warm_from(settings: runner.RunnerSettings, source: Path) -> int:
 def refuse_misplaced_options(args: argparse.Namespace) -> None:
     """--from and --status belong to warm only, and not together (--status never copies anything)."""
     action = getattr(args, "action", "run") or "run"
+    if getattr(args, "attended", False) and action != "run":
+        raise safety.Refusal("BAD_OPTION", "--attended is for a drill run only: hermes provingground --attended.")
     if getattr(args, "status", False) and action != "warm":
         raise safety.Refusal("BAD_OPTION", "--status is for `hermes provingground warm --status` only.")
     if not getattr(args, "warm_from", None):
@@ -717,6 +739,9 @@ def _add_run_options(subparser: argparse.ArgumentParser) -> None:
     group.add_argument("--calls", default=None, metavar="FILE",
                        help="extra test calls (ids U…) and expect: contracts, same validator and grammar")
     group.add_argument("--check", action="store_true", help="exit 5 unless every declared expect: is met")
+    group.add_argument("--attended", action="store_true",
+                       help="add one full-stack column where Hermes asks you to approve the approval-worthy calls "
+                            f"(you answer; {attended.APPROVAL_TIMEOUT_S} s timeout; needs a terminal)")
     warm = subparser.add_argument_group("warm")
     warm.add_argument("--status", action="store_true", help="only report whether the runtime cache is ready")
     warm.add_argument("--from", dest="warm_from", default=None, metavar="DIR",
@@ -932,6 +957,8 @@ def handle_slash(raw_args: str = "", *, platform: str = "", session_id: str = ""
     """*post* is the plugin context's post_message (Hermes 0.23+), passed by the plugin entry when it exists."""
     args = _slash_args(raw_args or "")
     try:
+        if {"attended", "--attended"} & set((raw_args or "").split()):
+            attended.check_attended(os.environ, None, None, slash=True)
         if args.action == "show":
             return _slash_show(args)
         note = check_live_posture(user_config(), platform or None)
