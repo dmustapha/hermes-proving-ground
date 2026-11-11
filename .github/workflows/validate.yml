@@ -2,6 +2,10 @@
 # [ASSUMED] installing hermes-agent from the v0.23.1 tag with pip yields a working `hermes` entry point
 # (pyproject.toml:592-593 declares `hermes = "hermes_cli.main:main"`, requires-python ">=3.11,<3.15").
 # Fallback if it does not: DT-2 in PLAN.md (local validate JSON attached to the PR).
+# It did not: on Python 3.14, browser-harness 0.1.13 pins pillow==12.3.0, which has no 3.14 wheel on
+# ubuntu (upstream's uv.lock overrides it to Pillow 13.0.0; pip ignores that). Python 3.13 skips every
+# core dependency (markers python_version >= '3.14'). So the job uses Hermes's own installer at the
+# v0.23.1 commit, which syncs upstream's lock. The script is downloaded to a file, then run.
 name: validate
 on:
   push:
@@ -21,10 +25,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-      - run: python -m pip install "hermes-agent @ git+https://github.com/NousResearch/hermes-agent@v0.23.1"
+      - name: install hermes-agent v0.23.1 (official installer, pinned commit)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/hermes-install.sh" https://raw.githubusercontent.com/NousResearch/hermes-agent/v0.23.1/scripts/install.sh
+          bash "$RUNNER_TEMP/hermes-install.sh" --commit 3b421578588243f920886e6fe79a6faa87ea026e --non-interactive --skip-browser --skip-computer-use
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: hermes --version
       - run: hermes plugins validate . --install-deps --json | tee validate.json
       - run: for d in fixtures/*/; do hermes plugins validate "$d"; done
       - run: hermes plugins doctor . --ci
