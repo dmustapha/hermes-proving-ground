@@ -1,0 +1,7 @@
+# File: fixtures/extended/fx_redactor/plugin.yaml
+name: fx_redactor
+version: "0.1.0"
+description: "PROVING GROUND demo fixture: hides PG_PLAIN_MARKER in terminal output and always returns a string, so later output transforms are ignored."
+author: dmustapha
+requires_hermes: ">=0.23.0"
+provides_hooks: [transform_terminal_output]

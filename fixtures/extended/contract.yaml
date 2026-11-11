@@ -1,0 +1,7 @@
+# File: fixtures/extended/contract.yaml
+# The contract the trimmer's author would write: its TC04 change reaches the model on its own and in the full stack.
+# With the extended stack (fx_redactor loaded before fx_trimmer, both on transform_terminal_output, first string wins)
+# the stack half fails; `--without fx_redactor` clears it. Recorded in tests/test_extended_fixture_stack.py.
+schema: provingground.testcalls.v1
+expect:
+  TC04: {"solo:fx_trimmer": RESULT_CHANGED, stack: RESULT_CHANGED}
