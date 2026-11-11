@@ -13,6 +13,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -36,10 +37,16 @@ IGNORED_NAMES = frozenset({".git", "__pycache__", ".venv", "node_modules", ".pyt
 ROOT_SUBDIRS = ("home", "tmp", "userhome", "sandbox", "xdg/config", "xdg/cache", "xdg/data", "xdg/state")
 POLL_S = 0.2
 KILL_GRACE_S = 3.0
+# Debug P4 M-03: bounded reads. A column whose child.log or events.jsonl passes LOG_LIMIT_BYTES is stopped (LOG_LIMIT);
+# events are read up to EVENTS_MAX_BYTES, the output tail from the end, the escape scan only over new bytes.
+LOG_LIMIT_BYTES = 32 * 1024 * 1024
+EVENTS_MAX_BYTES = 16 * 1024 * 1024
+SCAN_CHUNK_BYTES = 1024 * 1024
+ESCAPED_NEEDLE = b'"ev": "escaped"'
 VERSION_RE = re.compile(r"v(\d+\.\d+\.\d+).*?local\s+([0-9a-f]{7,40})")
 
 CANCEL = threading.Event()  # set by SIGINT/SIGTERM/SIGHUP; checked before every spawn and in every poll loop
-_LIVE_LOCK = threading.Lock()
+_LIVE_LOCK = threading.RLock()  # re-entrant: the signal handler runs cancel_everything in the main thread (P4 M-02)
 _LIVE_PROCS: dict[int, subprocess.Popen] = {}
 _LIVE_ROOTS: set[Path] = set()
 
@@ -200,18 +207,25 @@ def create_drill_root(temp_base: Path) -> Path:
     return root
 
 
+def ensure_private_dir(path: Path, what: str) -> None:
+    """*path* must be ours: not a symlink, our uid, mode 0700 (created 0700 when missing)."""
+    if path.is_symlink():
+        raise safety.Refusal("SANDBOX_UNSUPPORTED", f"{what} {path} is a symlink; remove it and rerun.")
+    if not path.exists():
+        path.mkdir(mode=0o700)
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode):
+        raise safety.Refusal("SANDBOX_UNSUPPORTED", f"{what} {path} is not a directory; remove it and rerun.")
+    if info.st_uid != os.getuid():
+        raise safety.Refusal("SANDBOX_UNSUPPORTED", f"{what} {path} belongs to another user; remove it.")
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        os.chmod(path, 0o700)
+
+
 def ensure_private_cache(cache: Path) -> None:
     """The shared warm cache must be ours: no symlink component, our uid, mode 0700 (ARCH-F10)."""
     for path in (cache.parent, cache):
-        if path.is_symlink():
-            raise safety.Refusal("SANDBOX_UNSUPPORTED", f"warm cache {path} is a symlink; remove it and rerun.")
-        if not path.exists():
-            path.mkdir(mode=0o700)
-        info = path.lstat()
-        if info.st_uid != os.getuid():
-            raise safety.Refusal("SANDBOX_UNSUPPORTED", f"warm cache {path} belongs to another user; remove it.")
-        if stat.S_IMODE(info.st_mode) & 0o077:
-            os.chmod(path, 0o700)
+        ensure_private_dir(path, "warm cache")
 
 
 def _copy_filter(src_root: Path, dropped: list[str]) -> Callable[[str, list[str]], set[str]]:
@@ -366,11 +380,31 @@ def install_cancellation() -> None:
     atexit.register(cancel_everything)
 
 
-def _escaped_seen(events_path: Path) -> bool:
+class EscapeScan:
+    """Incremental scan of events.jsonl for the escaped event: each poll reads only the bytes added since the last
+    one (at most SCAN_CHUNK_BYTES), keeping a short carry so a needle split across reads is still found (P4 M-03)."""
+
+    def __init__(self, path: Path) -> None:
+        self.path, self.offset, self._carry = path, 0, b""
+
+    def seen(self) -> bool:
+        try:
+            with self.path.open("rb") as handle:
+                handle.seek(self.offset)
+                chunk = handle.read(SCAN_CHUNK_BYTES)
+        except OSError:
+            return False
+        self.offset += len(chunk)
+        data = self._carry + chunk
+        self._carry = data[-(len(ESCAPED_NEEDLE) - 1):]
+        return ESCAPED_NEEDLE in data
+
+
+def _size(path: Path) -> int:
     try:
-        return '"ev": "escaped"' in events_path.read_text(encoding="utf-8")
+        return path.stat().st_size
     except OSError:
-        return False
+        return 0
 
 
 def spawn_and_watch(root: Path, n_calls: int, settings: RunnerSettings, token: str,
@@ -386,21 +420,31 @@ def spawn_and_watch(root: Path, n_calls: int, settings: RunnerSettings, token: s
         with _LIVE_LOCK:
             _LIVE_PROCS[proc.pid] = proc
         try:
-            return _watch(proc, events_path, settings)
+            return _watch(proc, events_path, settings, root / "child.log")
         finally:
             with _LIVE_LOCK:
                 _LIVE_PROCS.pop(proc.pid, None)
 
 
-def _watch(proc: subprocess.Popen, events_path: Path, settings: RunnerSettings) -> tuple[int | None, str | None]:
-    deadline = time.monotonic() + settings.cell_timeout_s
+def _watch_reason(scan: EscapeScan, log_path: Path | None) -> str | None:
+    if scan.seen():
+        return "ESCAPED"
+    if max(_size(scan.path), _size(log_path) if log_path else 0) > LOG_LIMIT_BYTES:
+        return "LOG_LIMIT"
+    return None
+
+
+def _watch(proc: subprocess.Popen, events_path: Path, settings: RunnerSettings,
+           log_path: Path | None = None) -> tuple[int | None, str | None]:
+    deadline, scan = time.monotonic() + settings.cell_timeout_s, EscapeScan(events_path)
     while proc.poll() is None:
         if CANCEL.is_set():
             _kill_group(proc)
             return proc.returncode, "CANCELLED"
-        if _escaped_seen(events_path):
+        reason = _watch_reason(scan, log_path)
+        if reason:
             _kill_group(proc)
-            return proc.returncode, "ESCAPED"
+            return proc.returncode, reason
         if time.monotonic() > deadline:
             _kill_group(proc)
             return proc.returncode, "CELL_TIMEOUT"
@@ -411,18 +455,24 @@ def _watch(proc: subprocess.Popen, events_path: Path, settings: RunnerSettings) 
 # [VERIFIED by the §9.1 run] composition of the verified pieces above.
 
 
-def read_events(home: Path) -> list[dict[str, Any]]:
+def read_events(home: Path, max_bytes: int = EVENTS_MAX_BYTES) -> list[dict[str, Any]]:
+    """At most *max_bytes* of events.jsonl; a longer log adds a LOG_LIMIT abort instead of loading it all (P4 M-03)."""
     path = home / safety.STATE_DIRNAME / "events.jsonl"
     events: list[dict[str, Any]] = []
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        with path.open("rb") as handle:
+            raw = handle.read(max_bytes + 1)
     except OSError:
         return events
-    for line in lines:
+    clipped = len(raw) > max_bytes
+    lines = raw[:max_bytes].decode("utf-8", errors="replace").splitlines()
+    for line in lines[:-1] if clipped else lines:
         try:
             events.append(json.loads(line))
         except json.JSONDecodeError:
             continue
+    if clipped:
+        events.append({"t": float("inf"), "ev": "abort", "reason": "LOG_LIMIT"})
     return sorted(events, key=lambda e: float(e.get("t", 0.0)))
 
 
@@ -441,21 +491,36 @@ def abort_reason_from(events: Sequence[Mapping[str, Any]], watch_reason: str | N
 
 
 def _tail(path: Path, limit: int = 4000) -> str:
+    """The last *limit* characters, reading at most 4 * limit bytes from the end (P4 M-03)."""
     try:
-        return path.read_text(encoding="utf-8", errors="replace")[-limit:]
+        with path.open("rb") as handle:
+            handle.seek(max(0, _size(path) - 4 * limit))
+            return handle.read().decode("utf-8", errors="replace")[-limit:]
     except OSError:
         return ""
 
 
+def _copy_private(src: Path, dst: Path) -> None:
+    """Copy into a new 0600 file; never follows or overwrites an existing name (O_EXCL | O_NOFOLLOW)."""
+    fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "wb") as out, src.open("rb") as inp:
+        shutil.copyfileobj(inp, out)
+
+
 def _keep_logs(root: Path, spec: ColumnSpec, temp_base: Path) -> None:
+    """PROVINGGROUND_KEEP_LOGS: the logs dir gets the warm cache's checks (no symlink, our uid, 0700) (P4 L-01)."""
     if not os.environ.get(KEEP_LOGS_ENV):
         return
     target = temp_base / "provingground-logs"
-    target.mkdir(mode=0o700, exist_ok=True)
     name = re.sub(r"[^A-Za-z0-9_-]", "_", spec.name)
-    for src, suffix in ((root / "child.log", "log"), (root / "home" / safety.STATE_DIRNAME / "events.jsonl", "events.jsonl")):
-        if src.is_file():
-            shutil.copyfile(src, target / f"{name}-{root.name}.{suffix}")
+    try:
+        ensure_private_dir(target, "logs dir")
+        for src, suffix in ((root / "child.log", "log"),
+                            (root / "home" / safety.STATE_DIRNAME / "events.jsonl", "events.jsonl")):
+            if src.is_file():
+                _copy_private(src, target / f"{name}-{root.name}.{suffix}")
+    except (safety.Refusal, OSError) as exc:
+        print(f"{KEEP_LOGS_ENV}: logs not kept: {exc}", file=sys.stderr)
 
 
 def _cleanup_root(root: Path, spec: ColumnSpec, temp_base: Path) -> None:
