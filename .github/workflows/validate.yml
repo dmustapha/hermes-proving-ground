@@ -6,7 +6,7 @@
 name: validate
 on:
   push:
-    branches: [main]
+    branches: [main, "feat/**"]
   pull_request:
 permissions:
   contents: read
@@ -32,9 +32,104 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: hermes --version
       - run: hermes plugins validate . --install-deps --json | tee validate.json
-      - run: for d in fixtures/*/; do hermes plugins validate "$d"; done
+      - run: for d in fixtures/*/ fixtures/extended/*/; do [ -f "$d/plugin.yaml" ] || continue; hermes plugins validate "$d"; done
       - run: hermes plugins doctor . --ci
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: validate-json
           path: validate.json
+  author-recipe:
+    # Runs every run: step of examples/github-action.yml, unchanged and in order, with fixtures/fx_guard as the
+    # author's plugin and this commit as the PROVING GROUND ref; only the file's own env values are overridden.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.14"
+      - run: python -m pip install "ruamel.yaml==0.18.16"
+      - name: run the author recipe's steps
+        env:
+          PG_REPO: ${{ github.server_url }}/${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          PG_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+          PLUGIN_DIR: fixtures/fx_guard
+          PLUGIN_NAME: fx_guard
+          CALLS_FILE: examples/author-calls.yaml
+        run: |
+          python - <<'EOF'
+          import os, subprocess, sys, tempfile
+          from pathlib import Path
+          from ruamel.yaml import YAML
+          wf = YAML(typ="safe", pure=True).load(Path("examples/github-action.yml").read_text(encoding="utf-8"))
+          declared = {k: str(v) for k, v in wf["env"].items()}
+          env = {**os.environ, **declared, **{k: os.environ[k] for k in declared if os.environ.get(k)}}
+          ran = 0
+          for step in wf["jobs"]["wiring-test"]["steps"]:
+              if "run" not in step:
+                  print(f"skip uses: {step.get('uses')}", flush=True)
+                  continue
+              scratch = Path(tempfile.mkdtemp())
+              (scratch / "path").touch()
+              (scratch / "step.sh").write_text(step["run"], encoding="utf-8")
+              print(f"::group::{step.get('name', step['run'][:60])}", flush=True)
+              done = subprocess.run(["bash", "-e", str(scratch / "step.sh")], env={**env, "GITHUB_PATH": str(scratch / "path")})
+              print("::endgroup::", flush=True)
+              if done.returncode != 0:
+                  sys.exit(f"recipe step failed with exit {done.returncode}: {step.get('name')}")
+              added = [line for line in (scratch / "path").read_text(encoding="utf-8").splitlines() if line]
+              env["PATH"] = os.pathsep.join([*added, env["PATH"]])
+              ran += 1
+          print(f"author recipe: {ran} run steps passed")
+          EOF
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: author-recipe-report
+          path: pg-report.*
+          if-no-files-found: ignore
+  linux-drill:
+    # The real fixture drill on Linux from a git install of this commit: the golden matrix and tally, no aborted
+    # column, zero leftover processes and roots; then the in-process golden and extended-stack drills.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      TMPDIR: /tmp
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.14"
+      - run: python -m pip install "pytest==9.1.1" "ruamel.yaml==0.18.16" "rich==14.3.4"
+      - name: install hermes-agent v0.23.1 (official installer, pinned commit)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/hermes-install.sh" https://raw.githubusercontent.com/NousResearch/hermes-agent/v0.23.1/scripts/install.sh
+          bash "$RUNNER_TEMP/hermes-install.sh" --commit 3b421578588243f920886e6fe79a6faa87ea026e --non-interactive --skip-browser --skip-computer-use
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: install PROVING GROUND from git at this commit
+        run: >-
+          hermes plugins install
+          "${{ github.server_url }}/${{ github.event.pull_request.head.repo.full_name || github.repository }}"
+          --ref "${{ github.event.pull_request.head.sha || github.sha }}" --enable
+      - run: hermes provingground warm
+      - name: fixture drill
+        run: hermes provingground --fixtures --no-color --json "$RUNNER_TEMP/fixture-report.json"
+      - name: the saved report is the golden matrix with nothing left behind
+        run: PG_FIXTURE_REPORT="$RUNNER_TEMP/fixture-report.json" python -m pytest tests/test_saved_fixture_report_matches_golden.py -v
+      - name: in-process drills (golden matrix, LOAD FAILED, --without, extended stack)
+        run: >-
+          python -m pytest -m hermes -v
+          tests/test_golden_fixture_matrix.py tests/test_drill_fixtures_e2e.py tests/test_extended_fixture_stack.py
+      - name: no drill process or root is left
+        if: always()
+        run: |
+          procs=$(ps axeww -o pid=,command= | grep -v grep | grep -c "HERMES_HOME=[^ ]*provingground-[a-z0-9_]\{8\}" || true)
+          roots=$(find "$TMPDIR" -maxdepth 1 -regextype posix-extended -regex '.*/provingground-[a-z0-9_]{8}' | wc -l)
+          echo "leftover processes: $procs, leftover roots: $roots"
+          test "$procs" -eq 0 && test "$roots" -eq 0
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: linux-fixture-report
+          path: ${{ runner.temp }}/fixture-report.json
+          if-no-files-found: ignore

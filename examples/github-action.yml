@@ -1,0 +1,51 @@
+# File: examples/github-action.yml
+# Copy to .github/workflows/proving-ground.yml in your plugin's repo and set the four env values below.
+# It installs Hermes v0.23.1 with Hermes's own installer at the pinned commit (the only version with a recorded
+# drill), installs PROVING GROUND from git at a pinned commit, copies your plugin into the runner's Hermes home,
+# enables it, and runs your test calls with --check: the job fails (exit 5) when an expect: is not met.
+# Every drill runs in throwaway child Hermes homes with the model never called; the runner needs no secrets.
+# PROVING GROUND's own CI runs the run: steps of this exact file with fixtures/fx_guard as the plugin
+# (.github/workflows/validate.yml, job author-recipe).
+name: proving-ground
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+env:
+  PG_REPO: https://github.com/dmustapha/hermes-proving-ground
+  PG_REF: "0000000000000000000000000000000000000000"  # set to a 40-character PROVING GROUND commit SHA
+  PLUGIN_DIR: .                       # your plugin's directory in this repo (the one holding plugin.yaml)
+  PLUGIN_NAME: my_plugin              # its directory name under plugins/, as `solo:<name>` in your calls file
+  CALLS_FILE: author-calls.yaml       # your test calls and expect: contracts (see examples/author-calls.yaml)
+jobs:
+  wiring-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - name: install hermes-agent v0.23.1 (official installer, pinned commit)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/hermes-install.sh" https://raw.githubusercontent.com/NousResearch/hermes-agent/v0.23.1/scripts/install.sh
+          bash "$RUNNER_TEMP/hermes-install.sh" --commit 3b421578588243f920886e6fe79a6faa87ea026e --non-interactive --skip-browser --skip-computer-use
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: install PROVING GROUND at a pinned commit
+        run: hermes plugins install "$PG_REPO" --ref "$PG_REF" --enable
+      - name: copy and enable your plugin
+        run: |
+          home="${HERMES_HOME:-$HOME/.hermes}"
+          mkdir -p "$home/plugins"
+          rm -rf "$home/plugins/$PLUGIN_NAME"
+          cp -R "$PLUGIN_DIR" "$home/plugins/$PLUGIN_NAME"
+          rm -rf "$home/plugins/$PLUGIN_NAME/.git"
+          hermes plugins enable "$PLUGIN_NAME"
+      - name: prepare the drill runtime once (Hermes's own installer, about a minute)
+        run: hermes provingground warm
+      - name: wiring test with your contract
+        run: hermes provingground --calls "$CALLS_FILE" --check --no-color --json pg-report.json --markdown pg-report.md
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: proving-ground-report
+          path: pg-report.*
+          if-no-files-found: ignore
