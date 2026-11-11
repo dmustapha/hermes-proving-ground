@@ -74,3 +74,12 @@
 | CL-66 | `--focus` leaves out the rows where every cell is PASSED THROUGH and names the rows it left out. | test | tests/test_focus_view.py::test_focus_markdown_hides_quiet_rows_and_names_them |
 | CL-67 | The HTML report's focus checkbox works with CSS only; the page has no script and loads nothing from the network. | test | tests/test_focus_view.py::test_html_toggle_is_css_only_and_checked_by_focus |
 | CL-68 | The JSON export caps each recorded text at 8192 characters and marks the cut. | test | tests/test_export_caps.py::test_json_export_caps_a_long_field_and_says_how_much_was_cut |
+| CL-69 | With TMPDIR unset on Linux, Hermes's scratch temp dir is replaced by the first existing system temp dir, and tempfile follows it. | test | tests/test_linux_scratch_temp.py::test_hermes_scratch_temp_dir_falls_back_to_the_first_system_temp_base |
+| CL-70 | CI's Linux drill runs with TMPDIR unset and checks the warm cache is under /tmp. | grep | .github/workflows/validate.yml :: (?s)test -z "\$\{TMPDIR:-\}".*grep -q "\(temp dir /tmp\)" |
+| CL-71 | `--fixtures extended` adds fx_redactor, and its full stack shows two cross-plugin findings: REWRITE_UNSEEN_BY and MASKED_IN_STACK. | test | tests/test_extended_fixture_stack.py::test_fixtures_extended_through_the_cli_reports_both_cross_plugin_findings |
+| CL-72 | The HTML column headers carry each plugin's declared hooks, and the JSON report carries them in column_meta. | test | tests/test_declared_hooks.py::test_html_headers_carry_the_declared_hooks |
+| CL-72b | `show --plugins` lists each tested plugin's declared hooks and the plugins in each column. | test | tests/test_declared_hooks.py::test_show_plugins_lists_each_plugins_declared_hooks |
+| CL-73 | A solo column that also loads its requires_plugins is titled `<plugin> (+ deps)`. | test | tests/test_declared_hooks.py::test_solo_column_with_required_plugins_is_labelled_plus_deps |
+| CL-74 | A control character (such as a newline) in any argument of a `--calls` or cross-check call is refused (2b2ff93). | test | tests/test_call_grammar.py::test_control_characters_never_pass_in_any_string_argument |
+| CL-74b | Each allowed program has its own flag allow-list, so `curl -K FILE` is refused and curl must start with -q (2b2ff93). | test | tests/test_call_grammar.py::test_only_allow_listed_flags_pass |
+| CL-75 | The GitHub Pages site serves the committed fixture report. | grep | docs/index.html :: href="fixture-report\.html" |

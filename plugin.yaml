@@ -9,7 +9,7 @@ author: dmustapha
 license: MIT
 homepage: https://github.com/dmustapha/hermes-proving-ground
 requires_hermes: ">=0.23.1"  # the only version with a recorded drill; widen after a recorded run on another
-platforms: [macos, linux]  # Linux: CI linux-drill (ubuntu-latest), runs 42974335277 and 42975201834, golden matrix + 0 leftovers
+platforms: [macos, linux]  # Linux: CI linux-drill (ubuntu-latest), runs 42974335277 and 42975201834, and 42994971722 with TMPDIR unset; golden matrix + 0 leftovers
 provides_hooks:
   - pre_tool_call
   - post_tool_call

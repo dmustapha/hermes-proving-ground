@@ -19,7 +19,7 @@ hermes provingground --fixtures --html report.html
 ```
 After the catalog entry is merged, `hermes plugins install proving-ground` replaces the first line; the enable step stays.
 
-The warm-up takes about a minute on a fast connection and is allowed up to 15 minutes. `hermes provingground warm --check` says whether the runtime is ready for the temp directory of the current shell, without downloading anything. Run `hermes provingground` without `--fixtures` to test the directory plugins enabled in your own Hermes home. Verified on Hermes v0.23.1, macOS. `hermes provingground --help` lists every action and exit code.
+The warm-up takes about a minute on a fast connection and is allowed up to 15 minutes. `hermes provingground warm --check` says whether the runtime is ready for the temp directory of the current shell, without downloading anything. Run `hermes provingground` without `--fixtures` to test the directory plugins enabled in your own Hermes home. Verified on Hermes v0.23.1 on macOS and on Linux (CI `linux-drill` job, ubuntu-latest, run 42994971722, with TMPDIR unset). `hermes provingground --help` lists every action and exit code.
 
 ## Safety model
 > - **Throwaway child Hermes homes.** Every column runs in its own `hermes chat -q` child with a temporary Hermes home, home directory and working directory. This is not an OS sandbox: subject plugins run with your own file permissions, and a call rewritten to land outside the temporary directory is detected after it ran, not prevented, and its column is stopped.
@@ -60,6 +60,8 @@ TC04 in the full stack: the tool printed a three-line test log with one FAILED l
 | `--all-wires` | Two extra rows: LLM-CONTEXT (what the turn sends the model besides tool results) and LLM-REPLY (the final reply as delivered), marked CONTEXT ADDED or REPLY CHANGED against the baseline. |
 | `--pairs` | For an effect seen only in the full stack, runs pairs of plugins (at most 10, and the report says when it capped) and names the smallest set observed to reproduce it, or says it needs 3+ plugins. |
 | `--repeat N` | Runs each solo column with a plugin effect N times (1-5), and every solo column when an effect appears only in the full stack; a cell whose runs disagree is marked UNSTABLE. |
+| `--fixtures extended` | The demo stack plus a fourth demo plugin, `fx_redactor` (`fixtures/extended/`), which also rewrites terminal output. Hermes keeps the first output string, so in the full stack `fx_trimmer`'s TC04 change never reaches the model: the report shows two cross-plugin findings, `REWRITE_UNSEEN_BY` and `MASKED_IN_STACK`. Put action words such as `show` before the flag. |
+| `show --plugins` | Lists each tested plugin's declared hooks (its `plugin.yaml` `provides_hooks`) and the plugins loaded in each column. The HTML report shows the same hooks under each column header, and the JSON report carries them in `column_meta`. A solo column that also loads the plugin's `requires_plugins` is titled `<plugin> (+ deps)`. |
 | `warm --from DIR` | Copies the runtime from an existing Hermes installs dir, such as `~/.hermes/installs`, instead of downloading it. The source is only read, and the copy is checked to start before it is used. |
 
 ## How attribution works
@@ -133,6 +135,8 @@ These are facts about Hermes's plugin seams, not about any plugin. Each is writt
 - **First rewriter wins.** `transform_tool_result` and `transform_terminal_output` keep the first string any callback returns (`model_tools.py:887`, `tools/terminal_tool_result.py:144-147`). When several plugins rewrite a result, only one string is kept, so PROVING GROUND reports `multiple-candidates` instead of naming which one reached the model.
 - **First-run guard.** A child Hermes with a redirected HOME stops at the first-run setup guard unless its config names a model provider (`hermes_cli/main.py`, `_has_any_provider_configured`). PROVING GROUND writes a closed-loopback `custom` provider into each child's config.
 
+The worst bug we found was in our own code. A `--calls` file is shared input, and the closed call grammar that checks it had two holes. A newline inside a command was a second shell command that the grammar never checked, and `curl -K FILE` could read a curl config from the sandbox, which can name its own proxy and so get around the dead proxies the child runs behind. Both were closed in 2b2ff93: a control character in any argument is refused, and each allowed program has its own flag allow-list (`curl` must start with `-q` so no `.curlrc` is read). The regression tests are in `tests/test_call_grammar.py`.
+
 Running PROVING GROUND on a real stack of catalog plugins also found three bugs in PROVING GROUND itself, each fixed with a test: a core approval gate hidden by a stack block was reported as a masked plugin effect (58cab27); the cell detail did not say its attribution is the full-stack one (5e39586); a plugin's change on top of core truncation was not attributed to the plugin (bcfbe4c).
 
 ## Optional: a real catalog stack
@@ -172,7 +176,7 @@ PROVING GROUND runs the plugins you already have installed together, against the
 > - **Rule 12 (spawned children).** The child is a single-query `hermes chat -q`, but its config forces approvals to manual with single-query, cron and unattended modes all on deny, it never gets `--yolo`/`-z`/`--oneshot` or `HERMES_YOLO_MODE`, and the only commands it runs are the listed calls in `testcalls.yaml` (plus your own `--calls`, which must pass a closed grammar). Anything approval-worthy is denied by Hermes itself.
 
 ## Limits
-Every report says "Observed on 10 synthetic inputs in a sandbox." Ten synthetic inputs cannot cover what a stack does, and a quiet matrix is not a grade. Rewrites and escapes are detected after they ran, not prevented. Only directory plugins are tested; plugins that declare `requires_env` are shown N/A. Verified on Hermes v0.23.1 on macOS; Linux is untested. The full list, with reasons: [LIMITATIONS.md](LIMITATIONS.md). Threats and what is not defended against: [SECURITY.md](SECURITY.md). Every public claim and the command that checks it: [CLAIMS.md](CLAIMS.md).
+Every report says "Observed on 10 synthetic inputs in a sandbox." Ten synthetic inputs cannot cover what a stack does, and a quiet matrix is not a grade. Rewrites and escapes are detected after they ran, not prevented. Only directory plugins are tested; plugins that declare `requires_env` are shown N/A. Verified on Hermes v0.23.1 on macOS, and on Linux by CI (run 42994971722: the golden fixture matrix, zero leftovers, TMPDIR unset). The full list, with reasons: [LIMITATIONS.md](LIMITATIONS.md). Threats and what is not defended against: [SECURITY.md](SECURITY.md). Every public claim and the command that checks it: [CLAIMS.md](CLAIMS.md).
 
 ## For plugin authors
 Test your guard against a real stack before you ship. Run your plugin next to the ones your users install, put your trigger shape in a `--calls` file with `expect:` contracts, and keep `--check` in CI so a Hermes upgrade or a neighbouring plugin that changes your cell turns the build red.
