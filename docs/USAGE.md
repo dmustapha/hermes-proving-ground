@@ -106,7 +106,7 @@ These rules are version-scoped. A Hermes upgrade that changes one of them change
 
 TC04 in the full stack: the tool printed a three-line test log with one FAILED line, and the model would have received it without that line. One solo run names `fx_trimmer`.
 
-![TC04 x FULL STACK cell detail in the HTML report](cell-detail.png)
+![TC03 x FULL STACK cell detail in the HTML report](cell-detail.png)
 
 ## A real catalog stack
 Five catalog plugins at their pinned catalog SHAs, installed into a separate Hermes home: canary-trap, hermes-detox, progress-squash, readonly-guard, safe-swap. One run on Hermes v0.23.1 (2026-11-11) recorded `24 test calls · 5 plugins · 22 distinct effects recorded · 2 cross-plugin findings` ([real-stack-report.md](real-stack-report.md)).

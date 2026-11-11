@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="t">
+  <title id="t">PROVING GROUND</title>
+  <rect x="4" y="4" width="504" height="504" rx="112.64" fill="#111214" stroke="#2a2b31" stroke-width="8"/>
+  <rect x="96.00" y="96.00" width="85.33" height="85.33" rx="18.77" fill="#3a3c43"/>
+  <rect x="213.33" y="96.00" width="85.33" height="85.33" rx="18.77" fill="#3a3c43"/>
+  <rect x="330.67" y="96.00" width="85.33" height="85.33" rx="18.77" fill="#3a3c43"/>
+  <rect x="96.00" y="213.33" width="85.33" height="85.33" rx="18.77" fill="#3a3c43"/>
+  <rect x="213.33" y="213.33" width="85.33" height="85.33" rx="18.77" fill="#3a3c43"/>
+  <rect x="330.67" y="213.33" width="85.33" height="85.33" rx="18.77" fill="#facc15"/>
+  <rect x="96.00" y="330.67" width="85.33" height="85.33" rx="18.77" fill="#3a3c43"/>
+  <rect x="213.33" y="330.67" width="85.33" height="85.33" rx="18.77" fill="#3a3c43"/>
+  <rect x="330.67" y="330.67" width="85.33" height="85.33" rx="18.77" fill="#3a3c43"/>
+</svg>
