@@ -6,11 +6,12 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from . import safety
-from .observer import EventLog, clip_text, load_plan, write_abort
+from .observer import EventLog, ReplyLedger, clip_text, load_plan, trace_labels, write_abort
 
 ABORT_SENTINEL = "PROVINGGROUND DRILL_ABORTED"
 DONE_SENTINEL = "PROVINGGROUND DRILL_DONE"
@@ -62,40 +63,115 @@ def context_view(request: Mapping[str, Any], messages: list[Any]) -> dict[str, A
     return {"messages": kept, "tools": names}
 
 
+def _canon(value: Any) -> str:
+    """A comparable form of one request field: JSON text, with any non-JSON object reduced to its type name (a deep
+    copy of an object is a new object, so comparing objects would flag every copy as a change)."""
+    return json.dumps(value, sort_keys=True, default=lambda o: type(o).__name__)
+
+
+def request_rewrite(request: Mapping[str, Any], original: Any, trace: Any) -> list[str]:
+    """What differs between the request this step received and the request before any middleware ran
+    (agent/turn_api_call.py:139-145 passes both, plus the llm_request middleware_trace): the changed fields and
+    the trace labels. Empty when nothing was rewritten."""
+    labels = [f"llm_request: {label}" for label in trace_labels(trace)]
+    if not isinstance(original, Mapping):
+        return labels
+    keys = sorted(set(request) | set(original), key=str)
+    return [str(k) for k in keys if _canon(request.get(k)) != _canon(original.get(k))] + labels
+
+
+def _step_messages(request: Mapping[str, Any], original: Any) -> list[Any] | None:
+    """Steps are counted from the request before middleware: an llm_request middleware that trims history must not
+    make the drill re-issue an earlier call."""
+    for source in (original, request):
+        messages = source.get("messages") if isinstance(source, Mapping) else None
+        if isinstance(messages, list):
+            return messages
+    return None
+
+
+@dataclass
+class StepContext:
+    """What one llm_execution call carries besides the request, and the child-side helpers that observe it."""
+    original: Any = None
+    trace: Any = None
+    loaded_probe: Callable[[str], bool] | None = None
+    order_probe: Callable[[], Any] | None = None
+    ledger: ReplyLedger | None = None
+    watcher: Any = None  # census.Watcher
+    registry_probe: Callable[[], Mapping[str, Any]] | None = None
+
+
 def scripted_reply(request: Any, state_dir: Path, log: EventLog,
                    loaded_probe: Callable[[str], bool] | None = None,
-                   order_probe: Callable[[], Any] | None = None) -> dict[str, Any]:
+                   order_probe: Callable[[], Any] | None = None, step: StepContext | None = None) -> dict[str, Any]:
+    step = step or StepContext(loaded_probe=loaded_probe, order_probe=order_probe)
     abort_path = state_dir / safety.ABORT_FILENAME
     if abort_path.exists():
         reason = abort_path.read_text(encoding="utf-8").strip() or "ABORTED"
         return final_body(f"{ABORT_SENTINEL} {reason}")
-    messages = request.get("messages") if isinstance(request, dict) else None
+    messages = _step_messages(request, step.original) if isinstance(request, dict) else None
     if not isinstance(messages, list):
         write_abort(state_dir, log, "REFUSED_API_MODE")
         return final_body(f"{ABORT_SENTINEL} REFUSED_API_MODE")
     plan = load_plan(state_dir)
     calls = plan["calls"]
     done = completed_steps(messages)
-    log.write("llm_execution", step=done, n_messages=len(messages), provider_called=False)
+    call_id = str(calls[done]["id"]) if done < len(calls) else "final"
+    rewrite = request_rewrite(request, step.original, step.trace)
+    log.write("llm_execution", step=done, n_messages=len(messages), provider_called=False, call_id=call_id,
+              **({"request_rewrite": rewrite} if rewrite else {}))
     if plan.get("wires"):
         log.write("llm_context", step=done, **context_view(request, messages))
-    if done == 0 and loaded_probe is not None:
-        expected = [str(k) for k in plan.get("subjects") or []]
-        loaded = [k for k in expected if _safe_probe(loaded_probe, k)]
-        log.write("plugins_loaded", expected=expected, loaded=loaded,
-                  missing=[k for k in expected if k not in loaded], order=_child_order(order_probe, expected))
-    if done < len(calls):
-        return tool_call_body(done, calls[done])
-    log.write("done", steps=done)
-    return final_body(DONE_SENTINEL)
+    if done == 0:
+        _first_step(plan, log, step)
+    body = tool_call_body(done, calls[done]) if done < len(calls) else final_body(DONE_SENTINEL)
+    if done >= len(calls):
+        log.write("done", steps=done)
+    if step.ledger is not None:
+        step.ledger.expect(call_id, body)
+    return body
 
 
-def _child_order(probe: Callable[[], Any] | None, expected: list[str]) -> list[str] | None:
-    """The subject plugins in the order the child actually loaded them; None when the child cannot say."""
+def _first_step(plan: Mapping[str, Any], log: EventLog, step: StepContext) -> None:
+    """Every plugin has loaded by the first model step: confirm the subjects, watch any that loaded after
+    PROVING GROUND, and record what each registered."""
+    if step.loaded_probe is None:
+        return
+    expected = [str(k) for k in plan.get("subjects") or []]
+    loaded = [k for k in expected if _safe_probe(step.loaded_probe, k)]
+    census = None
+    if step.watcher is not None and step.registry_probe is not None:
+        step.watcher.wrap_loaded(at_step=True)
+        census = _safe_census(step)
+    log.write("plugins_loaded", expected=expected, loaded=loaded, missing=[k for k in expected if k not in loaded],
+              order=_child_order(step.order_probe, expected),
+              inner=_loaded_after(_child_order(step.order_probe, None), str(plan.get("pg_key") or ""), expected),
+              **({"census": census} if census is not None else {}))
+
+
+def _loaded_after(order: list[str] | None, pg_key: str, expected: list[str]) -> list[str]:
+    """Subjects the child loaded after PROVING GROUND (a requires_plugins layer): their llm_execution middleware
+    sits inside PROVING GROUND's frame, which never calls next_call."""
+    if not order or pg_key not in order:
+        return []
+    return [k for k in order[order.index(pg_key) + 1:] if k in expected]
+
+
+def _safe_census(step: StepContext) -> dict[str, Any] | None:
+    try:
+        return step.watcher.census(step.registry_probe())
+    except Exception:
+        return None  # no census: the report says the registrations are unknown
+
+
+def _child_order(probe: Callable[[], Any] | None, expected: list[str] | None) -> list[str] | None:
+    """The subject plugins (every plugin when *expected* is None) in the order the child actually loaded them;
+    None when the child cannot say."""
     if probe is None:
         return None
     try:
-        return [str(k) for k in probe() if str(k) in expected]
+        return [str(k) for k in probe() if expected is None or str(k) in expected]
     except Exception:
         return None
 
@@ -116,17 +192,23 @@ def _fresh(reply: Any) -> Any:
 
 
 def make_llm_execution(state_dir: Path, log: EventLog, loaded_probe: Callable[[str], bool] | None = None,
-                       order_probe: Callable[[], Any] | None = None) -> Callable[..., Any]:
+                       order_probe: Callable[[], Any] | None = None, *, ledger: ReplyLedger | None = None,
+                       watcher: Any = None, registry_probe: Callable[[], Mapping[str, Any]] | None = None
+                       ) -> Callable[..., Any]:
     """The last-resort reply is built here, at register time. Hermes takes only a ChatCompletion back from
     llm_execution (agent/turn_api_call.py:139 hands it to the same intake as a provider response), and a callback that
     raises is skipped to the next frame and finally to the provider (hermes_cli/middleware.py:206-214). Built up front,
     the error path returns an object that already exists; if it cannot be built at all, register() fails, the child
-    never activates, and the runner reports NOT_ACTIVATED."""
+    never activates, and the runner reports NOT_ACTIVATED. PROVING GROUND loads last, so this is the innermost
+    frame: every subject llm_execution middleware wraps it, and next_call is never invoked."""
     last_resort = _completion(final_body(f"{ABORT_SENTINEL} INJECTOR_ERROR"))
 
-    def llm_execution(request: Any = None, next_call: Any = None, **_kwargs: Any) -> Any:
+    def llm_execution(request: Any = None, next_call: Any = None, original_request: Any = None,
+                      middleware_trace: Any = None, **_kwargs: Any) -> Any:
+        step = StepContext(original_request, middleware_trace, loaded_probe, order_probe, ledger, watcher,
+                           registry_probe)
         try:
-            return _completion(scripted_reply(request, state_dir, log, loaded_probe, order_probe))
+            return _completion(scripted_reply(request, state_dir, log, step=step))
         except Exception as exc:  # middleware fails open; an exception here would reach the provider
             write_abort(state_dir, log, f"INJECTOR_ERROR:{type(exc).__name__}")
             return _fresh(last_resort)

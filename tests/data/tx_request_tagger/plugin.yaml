@@ -1,0 +1,5 @@
+name: tx_request_tagger
+version: "0.1.0"
+description: "Test-only: an llm_request middleware that appends a tag to the system prompt of every step request."
+author: dmustapha
+provides_middleware: [llm_request]

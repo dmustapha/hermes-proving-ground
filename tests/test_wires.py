@@ -222,8 +222,10 @@ def test_a_child_registers_wire_taps_only_when_its_plan_asks(plugin_root_module,
                                                              wires: bool) -> None:
     pytest.importorskip("openai")  # the child's injector builds its replies with Hermes's openai
     hooks = _child(plugin_root_module, fake_ctx, monkeypatch, tmp_path, wires)
-    expected = plugin_root_module.HOOK_NAMES if wires else plugin_root_module.CALL_HOOK_NAMES
+    always = plugin_root_module.CALL_HOOK_NAMES + plugin_root_module.STEP_HOOK_NAMES
+    expected = plugin_root_module.HOOK_NAMES if wires else always
     assert sorted(hooks) == sorted(expected)
+    assert fake_ctx.middleware == ["llm_execution", "tool_execution"]
 
 
 def test_manifest_declares_exactly_the_hooks_the_plugin_registers(plugin_root_module) -> None:

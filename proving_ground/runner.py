@@ -29,7 +29,8 @@ from . import injector, matrix, safety, testcalls
 DEAD_PROVIDER_URL = "http://127.0.0.1:9/v1"
 DEAD_PROXY = "http://127.0.0.1:9"
 DRILL_PROMPT = "run provingground wiring test"
-PG_PLUGIN_KEY = "proving-ground"
+PG_PLUGIN_KEY = "proving-ground"  # the catalog name and the key a user's own Hermes home installs it under
+CHILD_PG_KEY = "zz-proving-ground"  # the copy inside each child; see child_pg_key
 WARM_MARKER = ".provingground-warm"
 KEEP_LOGS_ENV = "PROVINGGROUND_KEEP_LOGS"  # debug: copy child.log + events out before the root is removed
 ENV_PASSTHROUGH = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "USER", "LOGNAME", "SHELL", "TERM")
@@ -292,21 +293,49 @@ def redact_entries(settings: Mapping[str, Any], dropped: list[str], key: str) ->
     return out
 
 
+def child_pg_key(subject_keys: Sequence[str]) -> str:
+    """The registry key of PROVING GROUND's copy in a child: one that sorts after every subject key. A flat
+    directory plugin's key is its manifest name (hermes_cli/plugins_manifest.py:562-563, manifest_key :355-357), so
+    the copy's plugin.yaml is renamed to it (and its directory too); the catalog name stays proving-ground. Hermes loads each dependency layer alphabetically by key
+    (plugins_manifest.py:237-283) and execution middleware runs in registration order with index 0 outermost
+    (hermes_cli/middleware.py:162-214), so loading last makes PROVING GROUND the innermost llm_execution and
+    tool_execution frame: every subject middleware wraps it and runs. Subjects with requires_plugins load in a later
+    layer, after it whatever their name; the child reports where each one loaded."""
+    key = CHILD_PG_KEY
+    while any(k >= key for k in subject_keys):
+        key = "z" + key
+    return key
+
+
+MANIFEST_NAME = re.compile(r"^name: *\S+ *$", re.M)
+
+
+def rename_manifest(path: Path, key: str) -> None:
+    """Point the copied manifest's top-level `name:` at *key*; exactly one such line, or the copy is refused."""
+    text = path.read_text(encoding="utf-8")
+    renamed, count = MANIFEST_NAME.subn(f"name: {key}", text)
+    if count != 1:
+        raise ValueError(f"{path}: expected one top-level name line, found {count}")
+    path.write_text(renamed, encoding="utf-8")
+
+
 def build_child_home(root: Path, spec: ColumnSpec, settings: RunnerSettings,
                      calls: Sequence[testcalls.DrillCall], token: str, dropped: list[str] | None = None) -> Path:
     home, notes = root / "home", dropped if dropped is not None else []
     for source in spec.plugins:
         _copy_plugin(source.path, home / "plugins" / source.key, notes)
-    _copy_plugin(settings.pg_source, home / "plugins" / PG_PLUGIN_KEY)
+    pg_key = child_pg_key([s.key for s in spec.plugins])
+    _copy_plugin(settings.pg_source, home / "plugins" / pg_key)
+    rename_manifest(home / "plugins" / pg_key / "plugin.yaml", pg_key)
     ensure_private_cache(settings.warm_cache)
     (home / "installs").symlink_to(settings.warm_cache, target_is_directory=True)
-    keys = [s.key for s in spec.plugins] + [PG_PLUGIN_KEY]
+    keys = [s.key for s in spec.plugins] + [pg_key]
     entries = {s.key: redact_entries(s.settings, notes, s.key) for s in spec.plugins if s.settings}
     (home / "config.yaml").write_text(render_child_config(keys, entries, root / "sandbox"), encoding="utf-8")
     state = home / safety.STATE_DIRNAME
     state.mkdir(parents=True, exist_ok=True)
     (state / safety.TOKEN_FILENAME).write_text(token, encoding="utf-8")
-    plan: dict[str, Any] = {"sandbox": str(root / "sandbox"), "subjects": [s.key for s in spec.plugins],
+    plan: dict[str, Any] = {"sandbox": str(root / "sandbox"), "subjects": [s.key for s in spec.plugins], "pg_key": pg_key,
                             "calls": [c.as_plan() for c in calls]}
     if settings.wires:
         plan["wires"] = wire_spec(settings)

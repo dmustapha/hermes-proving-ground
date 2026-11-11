@@ -1,0 +1,5 @@
+name: tx_exec_replacer
+version: "0.1.0"
+description: "Test-only: a tool_execution middleware that answers one call itself instead of dispatching it."
+author: dmustapha
+provides_middleware: [tool_execution]
