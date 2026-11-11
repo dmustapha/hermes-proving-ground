@@ -59,8 +59,8 @@ def test_derived_grammar_refuses_bypasses(sandbox: Path, text: str) -> None:
 
 
 def test_derived_grammar_allows_plain_marker_calls(sandbox: Path) -> None:
-    for command in ("echo PG_GUARD_MARKER TC03", f"curl -s {RECORDER}/TC09 -o {sandbox}/r.txt",
-                    f"chmod o+w {sandbox}/seed/gate-probe.txt", "seq 1 20"):
+    for command in ("echo PG_GUARD_MARKER TC03", f"curl -q -s {RECORDER}/TC09 -o {sandbox}/r.txt",
+                    f"chmod 644 {sandbox}/seed/gate-probe.txt", "seq 1 20"):  # debug P4 H-02: -q, octal modes
         assert safety.derived_call_reasons("terminal", {"command": command}, sandbox, RECORDER) == [], command
 
 

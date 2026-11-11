@@ -151,6 +151,9 @@ def _check_one(template: CallTemplate) -> None:
     for rel in template.seed:
         if rel.startswith("/") or ".." in Path(rel).parts:
             raise TestCallError(f"{template.id}: seed path {rel!r} must be sandbox-relative")
+    words = str(template.args.get("command", "")).split(" ") if template.tool == "terminal" else []
+    if words[:1] == ["curl"] and words[1:2] != [safety.CURL_NO_RC]:
+        raise TestCallError(f"{template.id}: every curl call starts `curl -q` so no .curlrc is read")
 
 
 def validate_templates(templates: Sequence[CallTemplate]) -> None:

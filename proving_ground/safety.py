@@ -29,7 +29,13 @@ NETWORK_PROGRAMS = frozenset({"curl", "wget", "nc", "ncat", "netcat", "telnet", 
 # Closed grammar for any call PG derives from someone else's output (cross-check) or a user file (ARCH-F3).
 DERIVED_PROGRAMS = frozenset({"echo", "printf", "seq", "curl", "chmod"})
 _DERIVED_TOKEN = re.compile(r"^[A-Za-z0-9_.,:=+@%/{}-]+$")
-_DERIVED_FORBIDDEN = re.compile(r"[$`;&|<>\\()*?!\[\]]|\.\.|file:|~")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")  # a newline or CR is a second shell command; a tab hides a token
+_DERIVED_FORBIDDEN = re.compile(r"[$`;&|<>\\()*?!\[\]\x00-\x1f\x7f]|\.\.|file:|~")
+# Per-program flag allow-list (debug P4 H-02): option words outside it can pull in unchecked input (`curl -K cfg`).
+# curl must start with -q (ignore every .curlrc), may carry -s and one `-o <sandbox path>`, and exactly one URL, the
+# run's own recorder. chmod takes an octal mode and sandbox paths. echo, printf and seq take no flags at all.
+CURL_NO_RC = "-q"
+_OCTAL_MODE = re.compile(r"^[0-7]{3,4}$")
 SECRET_NAME = re.compile(r"(?i)(^\.env(\..*)?$|\.pem$|\.key$|\.p12$|\.pfx$|^auth[^/]*\.json$|^credentials(\..*)?$|"
                          r"^id_(rsa|ed25519|ecdsa)$|^secrets?\.(json|ya?ml|toml)$)")
 SECRET_KEY = re.compile(r"(?i)(key|token|secret|password|passwd|credential)")
@@ -184,31 +190,76 @@ def escape_reasons(args: Mapping[str, Any], sandbox: Path) -> list[str]:
     return sorted(set(reasons))
 
 
-def _derived_terminal_reasons(command: str, recorder_url: str) -> list[str]:
+def _is_recorder_url(word: str, recorder_url: str) -> bool:
+    return word == recorder_url or word.startswith(recorder_url + "/")
+
+
+def _curl_reasons(args: list[str], recorder_url: str, box: Path) -> list[str]:
+    if not args or args[0] != CURL_NO_RC:
+        return ["grammar:curl:-q-must-come-first"]
+    found, urls, outputs, rest = [], 0, 0, iter(args[1:])
+    for word in rest:
+        if word == "-s":
+            continue
+        if word == "-o":
+            target, outputs = next(rest, ""), outputs + 1
+            if not (target.startswith("/") and _inside(Path(target), box)):
+                found.append(f"grammar:curl:-o-outside-sandbox:{target[:40]}")
+        elif word.startswith("-"):
+            found.append(f"grammar:flag:curl:{word[:40]}")
+        elif _is_recorder_url(word, recorder_url):
+            urls += 1
+        else:
+            found.append(f"grammar:curl:not-the-recorder:{word[:40]}")
+    if urls != 1:
+        found.append(f"grammar:curl:{urls}-recorder-urls")
+    return found + (["grammar:curl:more-than-one-o"] if outputs > 1 else [])
+
+
+def _chmod_reasons(args: list[str], box: Path) -> list[str]:
+    if len(args) < 2 or not _OCTAL_MODE.match(args[0]):
+        return [f"grammar:chmod:mode:{(args[0] if args else 'none')[:40]}"]
+    return [f"grammar:chmod:path:{p[:40]}" for p in args[1:] if not (p.startswith("/") and _inside(Path(p), box))]
+
+
+def _program_reasons(program: str, args: list[str], recorder_url: str, box: Path) -> list[str]:
+    if program == "curl":
+        return _curl_reasons(args, recorder_url, box)
+    if program == "chmod":
+        return _chmod_reasons(args, box)
+    return [f"grammar:flag:{program}:{w[:40]}" for w in args if w.startswith("-")]  # echo, printf, seq
+
+
+def _derived_terminal_reasons(command: str, recorder_url: str, box: Path) -> list[str]:
     if _DERIVED_FORBIDDEN.search(command):
         return ["grammar:forbidden-character"]
-    words = command.split()
-    if not words or words[0] not in DERIVED_PROGRAMS:
-        return [f"grammar:program:{words[0] if words else 'none'}"]
-    found = []
-    for word in words[1:]:
-        if not _DERIVED_TOKEN.match(word):
-            found.append(f"grammar:token:{word[:40]}")
-        elif "://" in word and not (word == recorder_url or word.startswith(recorder_url + "/")):
-            found.append(f"grammar:url:{word[:40]}")
-    return found
+    words = command.split(" ")  # single spaces only: an empty token means doubled, leading or trailing space
+    if "" in words:
+        return ["grammar:empty-token"]
+    if words[0] not in DERIVED_PROGRAMS:
+        return [f"grammar:program:{words[0][:40]}"]
+    found = [f"grammar:token:{w[:40]}" for w in words[1:] if not _DERIVED_TOKEN.match(w)]
+    found += [f"grammar:url:{w[:40]}" for w in words[1:] if "://" in w and not _is_recorder_url(w, recorder_url)]
+    return found + _program_reasons(words[0], words[1:], recorder_url, box)
+
+
+def _control_reasons(args: Mapping[str, Any]) -> list[str]:
+    return [f"grammar:control-character:{key}" for key, value in args.items()
+            if any(_CONTROL.search(text) for text in iter_strings(value))]
 
 
 def derived_call_reasons(tool: str, args: Mapping[str, Any], sandbox: Path, recorder_url: str) -> list[str]:
     """Closed allow-list grammar for calls PG did not author itself (cross-check replays, user test calls).
-    A terminal command must be `echo|printf|seq|curl|chmod` followed by plain tokens: no shell metacharacters,
-    no `$`, backticks, `..`, `~` or `file:`, URLs only on the run's own loopback recorder. Every path must also stay
-    in the sandbox. Anything else is never executed; the caller records it as unreplayable."""
+    No string argument may hold a control character (\\x00-\\x1f, \\x7f). A terminal command is single-space
+    separated words: `echo|printf|seq` with no flags, `curl -q [-s] [-o <sandbox path>] <recorder URL>`, or
+    `chmod <octal> <sandbox paths>`; no shell metacharacters, `$`, backticks, `..`, `~` or `file:`. Every path must
+    also stay in the sandbox. Anything else is never executed; the caller records it as unreplayable."""
     if tool not in ALLOWED_TOOLS:
         return [f"grammar:tool:{tool}"]
-    reasons = list(escape_reasons(args, sandbox))
+    box = sandbox.resolve()
+    reasons = list(escape_reasons(args, sandbox)) + _control_reasons(args)
     if tool == "terminal":
-        reasons += _derived_terminal_reasons(str(args.get("command", "")), recorder_url)
+        reasons += _derived_terminal_reasons(str(args.get("command", "")), recorder_url, box)
     else:
         reasons += [f"grammar:forbidden-character:{k}" for k, v in args.items()
                     if k == "path" and _DERIVED_FORBIDDEN.search(str(v))]

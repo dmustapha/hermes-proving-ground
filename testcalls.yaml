@@ -59,7 +59,7 @@ calls:
     subject: loopback fetch
     purpose: "Fetches one URL from the PROVING GROUND recorder on 127.0.0.1 into a sandbox file. The recorder entry proves the call ran."
     expect_baseline: PASSED_THROUGH
-    args: {command: "curl -s {RECORDER_URL}/{CALL_ID} -o {SANDBOX}/recorder-reply.txt"}
+    args: {command: "curl -q -s {RECORDER_URL}/{CALL_ID} -o {SANDBOX}/recorder-reply.txt"}
   - id: TC10
     tool: terminal
     subject: approval-worthy shape
