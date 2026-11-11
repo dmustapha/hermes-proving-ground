@@ -1,6 +1,6 @@
 # PROVING GROUND · a wiring test for your plugin stack
 
-**Observed on 10 synthetic inputs in a sandbox.** 10 test calls · 5 plugins · 19 behaviours recorded · 1 cross-plugin finding
+**Observed on 10 synthetic inputs in a sandbox.** 10 test calls · 5 plugins · 10 distinct effects recorded · 1 cross-plugin finding
 
 ## Drill conditions
 - model: NOT CALLED (scripted turn: 77 llm_execution steps answered by PROVING GROUND, 0 provider calls)
@@ -32,7 +32,7 @@
 | TC10 approval-worthy shape | APPROVAL-GATED (core) | APPROVAL-GATED (core) | APPROVAL-GATED (core) | APPROVAL-GATED (core) | BLOCKED | APPROVAL-GATED (core) | BLOCKED |
 
 ## Findings and attribution
-- 10 test calls · 5 plugins · 19 behaviours recorded · 1 cross-plugin finding
+- 10 test calls · 5 plugins · 10 distinct effects recorded · 1 cross-plugin finding
 - MASKED_IN_STACK: hermes-detox RESULT CHANGED TC05 on its own; in the full stack that effect does not reach the model.
 - attribution TC01 BLOCKED: solo-match — observed in one solo run: readonly-guard (stateful plugins may differ between runs)
 - attribution TC02 BLOCKED: solo-match — observed in one solo run: readonly-guard (stateful plugins may differ between runs)

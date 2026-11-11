@@ -1,5 +1,5 @@
 # File: catalog/proving-ground.yaml
-# [VERIFIED] fields and allowed values: research/catalog-README.md "Entry schema" (name pattern, https repo, 40-hex sha,
+# fields and allowed values: the plugin-catalog README "Entry schema" (name pattern, https repo, 40-hex sha,
 # tier community, category tools, requires_hermes SemVer floor, image on raw.githubusercontent pinned to the sha).
 name: proving-ground
 repo: https://github.com/dmustapha/hermes-proving-ground
@@ -22,6 +22,7 @@ known_issues:
   - "Subject plugins run with your own file permissions; a call that leaves the temp dir is detected after it ran, not prevented."
   - "A session-level /yolo toggle has no public API, so only HERMES_YOLO_MODE and approvals.mode: off are detected."
   - "Other plugins' own network code cannot be blocked by a plugin; it would only see synthetic test data."
+  - "On macOS, Hermes's finished launchd job labels for the child homes stay listed until its next gateway start; the parent hermes process may write Hermes's own bytecode into the Hermes install; each drill child installs a process-wide audit hook (sys.addaudithook) to count non-loopback connects."
 capabilities:
   provides_tools: []
   provides_hooks: [pre_tool_call, post_tool_call, transform_tool_result, transform_terminal_output, pre_approval_request, post_approval_response]

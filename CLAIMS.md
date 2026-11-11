@@ -1,5 +1,5 @@
 <!-- File: CLAIMS.md -->
-<!-- [VERIFIED by the §9.1 run] seed ledger; rows are added before any new public sentence is written. -->
+<!-- seed ledger; rows are added before any new public sentence is written. -->
 # CLAIMS — every public sentence and the evidence that backs it
 
 | id | claim | kind | evidence |
@@ -28,13 +28,13 @@
 | CL-20 | Leave the implicated plugin out, run again, and the cell and the contract clear. | test | tests/test_drill_fixtures_e2e.py::test_without_rerun_clears_the_cell_and_the_contract |
 | CL-21 | A plugin that did not load is reported LOAD FAILED, never PASSED THROUGH. | test | tests/test_matrix.py::test_unconfirmed_plugin_is_load_failed_never_passed_through |
 | CL-22 | PROVING GROUND deletes only temp directories it created. | test | tests/test_cleanup.py::test_unowned_directories_are_never_swept |
-| CL-23 | The committed fixture drill recorded 10 test calls, 3 plugins, 6 behaviours and 1 cross-plugin finding. | grep | docs/fixture-report.json :: "tally": "10 test calls · 3 plugins · 6 behaviours recorded · 1 cross-plugin finding" |
+| CL-23 | The committed fixture drill recorded 10 test calls, 3 plugins, 3 distinct effects and 1 cross-plugin finding. | grep | docs/fixture-report.json :: "tally": "10 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding" |
 | CL-24 | In that drill the model was not called: 61 scripted steps answered by PROVING GROUND, 0 provider calls. | grep | docs/fixture-report.json :: NOT CALLED \(scripted turn: 61 llm_execution steps answered by PROVING GROUND, 0 provider calls\) |
-| CL-25 | That drill took 18.3 s on a warm cache. | grep | docs/fixture-report.json :: "wall_s": 18\.3\d* |
+| CL-25 | That drill took 19.5 s on a warm cache. | grep | docs/fixture-report.json :: "wall_s": 19\.[45]\d* |
 | CL-26 | That drill left 0 drill processes and 0 drill roots. | grep | docs/fixture-report.json :: "leftover_processes": 0,\s*"leftover_roots": 0 |
 | CL-27 | In that drill fx_guard only saw TC03's original command in the stack, and the rewritten command ran (REWRITE_UNSEEN_BY). | grep | docs/fixture-report.json :: "kind": "REWRITE_UNSEEN_BY",\s*"call_id": "TC03" |
 | CL-28 | In that drill TC04's removed FAILED line is attributed to fx_trimmer by one solo run. | grep | docs/fixture-report.md :: attribution TC04 RESULT CHANGED: solo-match — observed in one solo run: fx_trimmer |
-| CL-29 | `--check` exits 5 when a declared expect: is not met. | grep | proving_ground/cli.py :: return 5 if check and matrix\.check_expectations |
+| CL-29 | `--check` exits 5 unless every declared expect: is met, and also when an expectation is not evaluated or none is declared. | test | tests/test_cli_exits.py::test_check_fails_on_unevaluated_or_empty_contracts |
 | CL-30 | `sweep` prints how many stale temporary roots it removed. | grep | proving_ground/cli.py :: removed \{len\(removed\)\} stale sandbox roots |
 | CL-31 | Plugins that declare requires_env are shown N/A, because the child has no credentials. | grep | proving_ground/matrix.py :: declares requires_env; the sandbox has no credentials |
 | CL-32 | The child never gets --yolo, -z or --oneshot. | test | tests/test_child_spawn.py::test_argv_never_bypasses_approvals |
@@ -43,10 +43,17 @@
 | CL-35 | A core approval gate hidden by a stack block is not reported as a masked plugin effect (58cab27). | test | tests/test_matrix.py::test_core_approval_gate_hidden_by_a_stack_block_is_not_masked |
 | CL-36 | The cell detail says its attribution is the full-stack one (5e39586). | test | tests/test_cell_detail.py::test_solo_cell_detail_labels_attribution_as_the_full_stack_one |
 | CL-37 | A plugin's change on top of core truncation is attributed to the plugin (bcfbe4c). | test | tests/test_matrix.py::test_plugin_result_change_over_core_truncation_is_attributed_to_the_plugin |
-| CL-38 | The real catalog stack run recorded 10 test calls, 5 plugins, 19 behaviours and 1 cross-plugin finding. | grep | docs/real-stack-report.md :: 10 test calls · 5 plugins · 19 behaviours recorded · 1 cross-plugin finding |
+| CL-38 | The real catalog stack run recorded 10 test calls, 5 plugins, 10 distinct effects and 1 cross-plugin finding. | grep | docs/real-stack-report.md :: 10 test calls · 5 plugins · 10 distinct effects recorded · 1 cross-plugin finding |
 | CL-39 | Its finding is MASKED_IN_STACK on TC05 for hermes-detox. | grep | docs/real-stack-report.md :: MASKED_IN_STACK: hermes-detox RESULT CHANGED TC05 on its own; in the full stack that effect does not reach the model\. |
 | CL-40 | In that run readonly-guard stops TC05 alone and in the full stack. | grep | docs/real-stack-report.md :: TC05 long output \x7c RESULT CHANGED \(core\) \x7c PASSED THROUGH \x7c RESULT CHANGED \x7c PASSED THROUGH \x7c BLOCKED \x7c PASSED THROUGH \x7c BLOCKED \x7c |
 | CL-41 | As of 2026-11-11, xray (#149414), crash-test (#151102), policy-backtester (#151434) and benchforge (#152504) are merged catalog entries. | grep | docs/field-2026-11-11.md :: (?s)#149414 MERGED.*xray.*#151102 MERGED.*crash-test.*#151434 MERGED.*policy-backtester.*#152504 MERGED.*benchforge |
-| CL-42 | As of 2026-11-11, a live search listed no catalog entry that tests the composed stack. | grep | docs/field-2026-11-11.md :: None of these entries runs several installed plugins together |
+| CL-41b | Each of those four entries is described in the README by a sentence quoted verbatim from its own PR description. | grep | docs/field-2026-11-11.md :: (?s)X-Ray sets traps for plugins instead of reading their code\..*For one armed turn it makes tools fail the way real systems fail.*a test harness for Hermes guardrails: what a rule would break, and what it would miss\..*BenchForge is the flight simulator for AI-written Arduino firmware\. |
+| CL-42 | As of 2026-11-11, catalog title searches for plugin stack, hook chain, plugin conflict, plugins interact and hook order returned no PR about running several installed plugins together. | grep | docs/field-2026-11-11.md :: These title searches returned no catalog PR about running several installed plugins together |
 | CL-43 | The first run fetches Hermes's runtime once, about 650 MB. | grep | proving_ground/cli.py :: one-time ~650 MB download |
 | CL-44 | CI runs the pure tier, verify-claims, hermes plugins validate and doctor on Hermes v0.23.1. | grep | .github/workflows/validate.yml :: (?s)pytest -m "not hermes".*verify-claims\.py.*plugins validate \..*plugins doctor \. --ci |
+| CL-45 | Ctrl-C during a drill stops every child and prints `drill cancelled; cleaned up N processes` (exit 130); an unexpected error is one line plus a crash log. | test | tests/test_cli_exits.py |
+| CL-46 | A failed warm-up refuses the drill (WARMUP_FAILED) and `warm --check` reports readiness without spawning anything. | test | tests/test_warm_up.py |
+| CL-47 | MASKED_IN_STACK is never reported when the stack cell did not load, did not run, does not apply or errored. | test | tests/test_masked_needs_a_stack_result.py |
+| CL-48 | Saved and exported reports replace your home and temp paths with ~ and {TMP}. | test | tests/test_report_loading.py::test_saved_and_exported_reports_carry_no_home_or_temp_paths |
+| CL-49 | The committed fixture drill left 0 drill processes after the run. | report | conditions.leftover_processes == 0 |
+| CL-50 | The Git-URL install leaves the plugin disabled until `hermes plugins enable proving-ground`. | grep | README.md :: hermes plugins enable proving-ground\s+# install leaves it disabled |

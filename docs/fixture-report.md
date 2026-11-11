@@ -1,6 +1,6 @@
 # PROVING GROUND · a wiring test for your plugin stack
 
-**Observed on 10 synthetic inputs in a sandbox.** 10 test calls · 3 plugins · 6 behaviours recorded · 1 cross-plugin finding
+**Observed on 10 synthetic inputs in a sandbox.** 10 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding
 
 ## Drill conditions
 - model: NOT CALLED (scripted turn: 61 llm_execution steps answered by PROVING GROUND, 0 provider calls)
@@ -14,7 +14,7 @@
 - load order given to the child (requires_plugins first, then alphabetical): fx_guard, fx_rewriter, fx_trimmer
 - coverage: executed: 3 · unavailable (requires_env): 0 · dependency-skipped / not a directory plugin: 0 · load-failed: 0
 - cleanup: 0 drill processes, 0 drill roots left after the run
-- wall time: 18.3s · started 2026-11-11T04:07:36+00:00
+- wall time: 19.5s · started 2026-11-11T05:19:55+00:00
 
 ## Matrix
 
@@ -32,7 +32,7 @@
 | TC10 approval-worthy shape | APPROVAL-GATED (core) | APPROVAL-GATED (core) | APPROVAL-GATED (core) | APPROVAL-GATED (core) | APPROVAL-GATED (core) |
 
 ## Findings and attribution
-- 10 test calls · 3 plugins · 6 behaviours recorded · 1 cross-plugin finding
+- 10 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding
 - REWRITE_UNSEEN_BY: fx_rewriter rewrote TC03 after every pre-call check had run. fx_guard blocks the rewritten call when it sees it directly; in the stack it only saw the original, and the rewritten call ran.
 - attribution TC02 BLOCKED: solo-match — observed in one solo run: fx_guard (stateful plugins may differ between runs)
 - attribution TC03 REWROTE: solo-match — observed in one solo run: fx_rewriter (stateful plugins may differ between runs)

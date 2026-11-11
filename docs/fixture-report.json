@@ -1,8 +1,9 @@
 {
   "schema": "provingground.report.v1",
+  "generator": "proving-ground 0.1.0",
   "headline": "PROVING GROUND · a wiring test for your plugin stack",
   "observed": "Observed on 10 synthetic inputs in a sandbox.",
-  "tally": "10 test calls · 3 plugins · 6 behaviours recorded · 1 cross-plugin finding",
+  "tally": "10 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding",
   "conditions": {
     "hermes_version": "v0.23.1 @ 3b4215785882",
     "n_calls": 10,
@@ -14,8 +15,8 @@
     ],
     "connects_total": 120,
     "connects_non_loopback": 0,
-    "wall_s": 18.338213042006828,
-    "started_at": "2026-11-11T04:07:36+00:00",
+    "wall_s": 19.490365499979816,
+    "started_at": "2026-11-11T05:19:55+00:00",
     "model": "NOT CALLED (scripted turn: 61 llm_execution steps answered by PROVING GROUND, 0 provider calls)",
     "provider": "none (closed loopback 127.0.0.1:9)",
     "approvals": "mode manual, single_query_mode deny, cron_mode deny, unattended_mode deny (headless child: every approval is denied)",
@@ -990,11 +991,11 @@
         "ran": true,
         "injected_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
+          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
         },
         "final_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
+          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
         },
         "status": "ok",
         "error_type": null,
@@ -1006,7 +1007,7 @@
         "escaped_reasons": [],
         "pre_seen_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
+          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
         }
       },
       "TC07": {
@@ -1023,8 +1024,8 @@
         "error_type": null,
         "error_message": null,
         "terminal_raw": null,
-        "tool_raw": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
-        "delivered": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "tool_raw": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "delivered": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
         "recorded": false,
         "escaped_reasons": [],
         "pre_seen_args": {
@@ -1064,10 +1065,10 @@
         "tool": "terminal",
         "ran": true,
         "injected_args": {
-          "command": "curl -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
+          "command": "curl -q -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
         },
         "final_args": {
-          "command": "curl -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
+          "command": "curl -q -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
         },
         "status": "ok",
         "error_type": null,
@@ -1078,7 +1079,7 @@
         "recorded": true,
         "escaped_reasons": [],
         "pre_seen_args": {
-          "command": "curl -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
+          "command": "curl -q -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
         }
       },
       "TC10": {
@@ -1221,11 +1222,11 @@
         "ran": true,
         "injected_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
+          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
         },
         "final_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
+          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
         },
         "status": "ok",
         "error_type": null,
@@ -1237,7 +1238,7 @@
         "escaped_reasons": [],
         "pre_seen_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
+          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
         }
       },
       "TC07": {
@@ -1254,8 +1255,8 @@
         "error_type": null,
         "error_message": null,
         "terminal_raw": null,
-        "tool_raw": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
-        "delivered": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "tool_raw": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "delivered": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
         "recorded": false,
         "escaped_reasons": [],
         "pre_seen_args": {
@@ -1295,10 +1296,10 @@
         "tool": "terminal",
         "ran": true,
         "injected_args": {
-          "command": "curl -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
+          "command": "curl -q -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
         },
         "final_args": {
-          "command": "curl -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
+          "command": "curl -q -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
         },
         "status": "ok",
         "error_type": null,
@@ -1309,7 +1310,7 @@
         "recorded": true,
         "escaped_reasons": [],
         "pre_seen_args": {
-          "command": "curl -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
+          "command": "curl -q -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
         }
       },
       "TC10": {
@@ -1452,11 +1453,11 @@
         "ran": true,
         "injected_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
+          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
         },
         "final_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
+          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
         },
         "status": "ok",
         "error_type": null,
@@ -1468,7 +1469,7 @@
         "escaped_reasons": [],
         "pre_seen_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
+          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
         }
       },
       "TC07": {
@@ -1485,8 +1486,8 @@
         "error_type": null,
         "error_message": null,
         "terminal_raw": null,
-        "tool_raw": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
-        "delivered": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "tool_raw": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "delivered": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
         "recorded": false,
         "escaped_reasons": [],
         "pre_seen_args": {
@@ -1526,10 +1527,10 @@
         "tool": "terminal",
         "ran": true,
         "injected_args": {
-          "command": "curl -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
+          "command": "curl -q -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
         },
         "final_args": {
-          "command": "curl -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
+          "command": "curl -q -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
         },
         "status": "ok",
         "error_type": null,
@@ -1540,7 +1541,7 @@
         "recorded": true,
         "escaped_reasons": [],
         "pre_seen_args": {
-          "command": "curl -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
+          "command": "curl -q -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
         }
       },
       "TC10": {
@@ -1683,11 +1684,11 @@
         "ran": true,
         "injected_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
+          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
         },
         "final_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
+          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
         },
         "status": "ok",
         "error_type": null,
@@ -1699,7 +1700,7 @@
         "escaped_reasons": [],
         "pre_seen_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
+          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
         }
       },
       "TC07": {
@@ -1716,8 +1717,8 @@
         "error_type": null,
         "error_message": null,
         "terminal_raw": null,
-        "tool_raw": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
-        "delivered": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "tool_raw": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "delivered": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
         "recorded": false,
         "escaped_reasons": [],
         "pre_seen_args": {
@@ -1757,10 +1758,10 @@
         "tool": "terminal",
         "ran": true,
         "injected_args": {
-          "command": "curl -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
+          "command": "curl -q -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
         },
         "final_args": {
-          "command": "curl -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
+          "command": "curl -q -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
         },
         "status": "ok",
         "error_type": null,
@@ -1771,7 +1772,7 @@
         "recorded": true,
         "escaped_reasons": [],
         "pre_seen_args": {
-          "command": "curl -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
+          "command": "curl -q -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
         }
       },
       "TC10": {
@@ -1914,11 +1915,11 @@
         "ran": true,
         "injected_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
+          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
         },
         "final_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
+          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
         },
         "status": "ok",
         "error_type": null,
@@ -1930,7 +1931,7 @@
         "escaped_reasons": [],
         "pre_seen_args": {
           "path": "{SANDBOX}/notes/written.txt",
-          "content": "provingground write check PGCANARY-c63c62d8df70451a\n"
+          "content": "provingground write check PGCANARY-a14d7acef97d6610\n"
         }
       },
       "TC07": {
@@ -1947,8 +1948,8 @@
         "error_type": null,
         "error_message": null,
         "terminal_raw": null,
-        "tool_raw": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
-        "delivered": "{\"content\": \"1|canary line PGCANARY-c63c62d8df70451a\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "tool_raw": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
+        "delivered": "{\"content\": \"1|canary line PGCANARY-a14d7acef97d6610\", \"file_size\": 38, \"is_binary\": false, \"is_image\": false, \"not_found\": false, \"total_lines\": 1, \"truncated\": false}",
         "recorded": false,
         "escaped_reasons": [],
         "pre_seen_args": {
@@ -1988,10 +1989,10 @@
         "tool": "terminal",
         "ran": true,
         "injected_args": {
-          "command": "curl -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
+          "command": "curl -q -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
         },
         "final_args": {
-          "command": "curl -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
+          "command": "curl -q -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
         },
         "status": "ok",
         "error_type": null,
@@ -2002,7 +2003,7 @@
         "recorded": true,
         "escaped_reasons": [],
         "pre_seen_args": {
-          "command": "curl -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
+          "command": "curl -q -s {RECORDER_URL}/TC09 -o {SANDBOX}/recorder-reply.txt"
         }
       },
       "TC10": {
