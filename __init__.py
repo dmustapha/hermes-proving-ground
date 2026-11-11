@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -59,7 +60,7 @@ def _register_drill_child(ctx: Any) -> None:
     probe = getattr(ctx, "has_plugin", None)  # public PluginContext.has_plugin (plugins_context.py:57-63)
     ctx.register_middleware("llm_execution", injector.make_llm_execution(state_dir, log, probe))
     observer.install_socket_audit(log)
-    log.write("activated", calls=len(plan["calls"]))
+    log.write("activated", calls=len(plan["calls"]), dont_write_bytecode=sys.dont_write_bytecode)
 
 
 def register(ctx: Any) -> None:

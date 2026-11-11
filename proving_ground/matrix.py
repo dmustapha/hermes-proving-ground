@@ -83,6 +83,7 @@ class ColumnRun:
     load_failed: tuple[str, ...] = ()
     scripted_steps: int = 0
     stray_escapes: tuple[tuple[str, ...], ...] = ()  # escapes whose tool_call_id matched no drill call
+    bytecode_off: bool | None = None  # the child's sys.dont_write_bytecode, from its activated event
 
 
 @dataclass(frozen=True)
@@ -252,8 +253,9 @@ def column_from_events(name: str, plugins: tuple[str, ...], plan_calls: Sequence
                     for c in plan_calls}
     connects = tuple((str(e.get("address")), bool(e.get("loopback"))) for e in events if e.get("ev") == "connect")
     steps = sum(1 for e in events if e.get("ev") == "llm_execution")
+    activated = next((e for e in events if e.get("ev") == "activated"), {})
     return ColumnRun(name, plugins, observations, abort_reason, wall_s, connects,
-                     unconfirmed_plugins(plugins, events), steps, stray_escapes)
+                     unconfirmed_plugins(plugins, events), steps, stray_escapes, activated.get("dont_write_bytecode"))
 
 
 def _text(obs: CallObservation) -> str:

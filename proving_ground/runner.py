@@ -182,8 +182,10 @@ def child_env(base: Mapping[str, str], root: Path, token: str, *, network: bool 
     return env
 
 
-def child_argv(hermes_bin: Path, n_calls: int) -> list[str]:
-    return [str(hermes_bin), "chat", "-q", DRILL_PROMPT, "-Q", "-t", "terminal,file",
+def child_argv(launch: Path | Sequence[str], n_calls: int) -> list[str]:
+    """`launch` is the hermes executable or the resolved interpreter prefix (launch_prefix)."""
+    prefix = [str(launch)] if isinstance(launch, (str, Path)) else [str(a) for a in launch]
+    return [*prefix, "chat", "-q", DRILL_PROMPT, "-Q", "-t", "terminal,file",
             "--provider", "custom", "--base-url", DEAD_PROVIDER_URL, "-m", SCRIPTED_MODEL,
             "--max-turns", str(n_calls + 2)]
 
@@ -377,7 +379,7 @@ def spawn_and_watch(root: Path, n_calls: int, settings: RunnerSettings, token: s
         raise Cancelled("cancelled before spawn")
     events_path = root / "home" / safety.STATE_DIRNAME / "events.jsonl"
     with (root / "child.log").open("wb") as log:
-        proc = subprocess.Popen(child_argv(settings.hermes_bin, n_calls),
+        proc = subprocess.Popen(child_argv(launch_prefix(settings), n_calls),
                                 env=child_env(os.environ, root, token, network=network),
                                 cwd=root / "sandbox", stdin=subprocess.DEVNULL, stdout=log,
                                 stderr=subprocess.STDOUT, start_new_session=True)
@@ -622,21 +624,53 @@ def plan_columns(subjects: Sequence[PluginSource]) -> list[ColumnSpec]:
     return columns
 
 
-def hermes_version(hermes_bin: Path, settings: RunnerSettings | None = None) -> str:
-    """`hermes --version`, run in a throwaway PG root (installs -> warm cache) so the real Hermes tree is not touched:
-    even --version takes a lease on the runtime environment it resolves (revision-1 finding)."""
-    if settings is None:
-        out = subprocess.run([str(hermes_bin), "--version"], capture_output=True, text=True, timeout=60, check=False)
-        return _parse_version(out.stdout)
+def _run_throwaway(settings: RunnerSettings, argv: Sequence[str]) -> subprocess.CompletedProcess:
+    """Run a short Hermes command in a throwaway PG root (installs -> warm cache), so the real Hermes tree is not
+    touched: even --version takes a lease on the runtime environment it resolves (revision-1 finding)."""
     root = create_drill_root(settings.temp_base)
     try:
         ensure_private_cache(settings.warm_cache)
         (root / "home" / "installs").symlink_to(settings.warm_cache, target_is_directory=True)
-        out = subprocess.run([str(hermes_bin), "--version"], capture_output=True, text=True, timeout=60, check=False,
-                             env=child_env(os.environ, root, ""), cwd=root / "sandbox", stdin=subprocess.DEVNULL)
-        return _parse_version(out.stdout)
+        return subprocess.run(list(argv), capture_output=True, text=True, timeout=60, check=False,
+                              env=child_env(os.environ, root, ""), cwd=root / "sandbox", stdin=subprocess.DEVNULL)
     finally:
         _cleanup_root(root, ColumnSpec("version", ()), settings.temp_base)
+
+
+_PREFIX_LOCK = threading.Lock()
+_PREFIXES: dict[Path, tuple[str, ...]] = {}
+
+
+def parse_runtime_command(stdout: str) -> tuple[str, ...] | None:
+    """`hermes --print-runtime-command` prints the interpreter argv as JSON (hermes_cli/_launchers.py:75-84,
+    "machine boundary for consumers holding the exact published launcher"). Insert -B after the interpreter so the
+    child writes no bytecode into the Hermes tree; the launcher's -I isolation is kept (DEV-021, point 5)."""
+    try:
+        argv = json.loads(stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, ValueError, IndexError):
+        return None
+    if not (isinstance(argv, list) and len(argv) >= 3 and all(isinstance(a, str) for a in argv) and "-I" in argv):
+        return None
+    return (argv[0], "-B", *argv[1:])
+
+
+def launch_prefix(settings: RunnerSettings) -> tuple[str, ...]:
+    """The argv prefix every child runs with: Hermes's own interpreter command plus -B, resolved once per launcher.
+    Falls back to the launcher itself when it cannot print its runtime command (older Hermes)."""
+    with _PREFIX_LOCK:
+        if settings.hermes_bin not in _PREFIXES:
+            out = _run_throwaway(settings, [str(settings.hermes_bin), "--print-runtime-command"])
+            parsed = parse_runtime_command(out.stdout) if out.returncode == 0 else None
+            _PREFIXES[settings.hermes_bin] = parsed or (str(settings.hermes_bin),)
+        return _PREFIXES[settings.hermes_bin]
+
+
+def hermes_version(hermes_bin: Path, settings: RunnerSettings | None = None) -> str:
+    """`hermes --version`, through the same -B interpreter prefix as the children when settings are given."""
+    if settings is None:
+        out = subprocess.run([str(hermes_bin), "--version"], capture_output=True, text=True, timeout=60, check=False)
+        return _parse_version(out.stdout)
+    return _parse_version(_run_throwaway(settings, [*launch_prefix(settings), "--version"]).stdout)
 
 
 def _parse_version(stdout: str) -> str:
