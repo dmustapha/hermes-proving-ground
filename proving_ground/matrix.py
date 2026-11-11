@@ -355,6 +355,8 @@ def _masked(stack: Mapping[str, Cell], solos: Mapping[str, Mapping[str, Cell]]) 
     found = []
     for key, cells in solos.items():
         for cid, cell in cells.items():
+            if cell.core:  # Hermes core's own effect (e.g. the approval gate), not the plugin's
+                continue
             for outcome in set(cell.outcomes) - QUIET - set(stack[cid].outcomes):
                 found.append(Finding("MASKED_IN_STACK", cid, (key,),
                                      f"{key} {LABELS[outcome]} {cid} on its own; in the full stack that effect "

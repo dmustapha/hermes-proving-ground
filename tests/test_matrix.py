@@ -124,3 +124,18 @@ def test_requires_plugins_load_first() -> None:
     a, b = runner.PluginSource("zz_base", Path("/x")), runner.PluginSource("aa_addon", Path("/y"), requires=("zz_base",))
     assert [s.key for s in runner.load_order([b, a])] == ["zz_base", "aa_addon"]
     assert [s.key for s in runner.plan_columns([b, a])[1].plugins] == ["zz_base", "aa_addon"]
+
+
+def test_core_approval_gate_hidden_by_a_stack_block_is_not_masked() -> None:
+    from helpers import column
+    from proving_ground import matrix
+
+    gated = {"TC05": {"status": "error", "error_message": "Command denied: runs without a user present to approve it"}}
+    blocked = {"TC05": {"block": "fx_guard: read-only session"}}
+    infos = [matrix.CallInfo(i, "terminal", i, i) for i in ("TC01", "TC02", "TC03", "TC04", "TC05")]
+    cols = [column("baseline", (), gated), column("solo:fx_quiet", ("fx_quiet",), gated),
+            column("solo:fx_guard", ("fx_guard",), blocked), column("stack", ("fx_guard", "fx_quiet"), blocked)]
+    m = matrix.build_matrix(cols, None, {}, infos, "v", "t", 1.0)
+    assert m.cell("solo:fx_quiet", "TC05").core
+    assert primary(m, "stack", "TC05") is Outcome.BLOCKED
+    assert [f for f in m.findings if f.kind == "MASKED_IN_STACK"] == []
