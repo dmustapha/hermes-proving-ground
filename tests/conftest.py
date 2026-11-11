@@ -93,3 +93,13 @@ class FakeContext:
 @pytest.fixture()
 def fake_ctx() -> FakeContext:
     return FakeContext()
+
+
+@pytest.fixture(autouse=True)
+def _reports_in_tmp(tmp_path_factory: Any, monkeypatch: Any) -> None:
+    """No test writes into the real Hermes home's plugin-data: reports, latest.json and last-error.json go to a
+    per-test temp dir (debug P4: the slash failure record would otherwise land in ~/.hermes/plugin-data)."""
+    from proving_ground import cli
+
+    directory = tmp_path_factory.mktemp("reports")
+    monkeypatch.setattr(cli, "reports_dir", lambda: directory)
