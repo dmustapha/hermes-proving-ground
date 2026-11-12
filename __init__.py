@@ -84,13 +84,14 @@ def _register_surfaces(ctx: Any) -> None:
 
 
 def _register_drill_child(ctx: Any) -> None:
-    from .proving_ground import census, injector, observer
+    """Drill child only. Uses public PluginContext calls exclusively: register_hook, register_middleware and
+    has_plugin. It never reads or rewrites the plugin manager's private state (_plugins, _hooks, _middleware), so a
+    Hermes update cannot break it silently; what needs that state (per-plugin liveness) is reported as unknown."""
+    from .proving_ground import injector, observer
 
     state_dir = Path(os.environ["HERMES_HOME"]) / safety.STATE_DIRNAME
     plan = observer.load_plan(state_dir)
     log = observer.EventLog(state_dir / safety.EVENTS_FILENAME)
-    watcher = census.Watcher(log, lambda: getattr(ctx, "_manager", None), [str(k) for k in plan.get("subjects") or []])
-    watcher.wrap_loaded()  # PROVING GROUND loads last in its layer: every other subject has registered by now
     hooks = observer.make_hooks(state_dir, Path(plan["sandbox"]), log)
     for name in CALL_HOOK_NAMES:
         ctx.register_hook(name, hooks[name])
@@ -100,34 +101,10 @@ def _register_drill_child(ctx: Any) -> None:
         for name, tap in observer.make_wire_hooks(log).items():
             ctx.register_hook(name, tap)
     probe = getattr(ctx, "has_plugin", None)  # public PluginContext.has_plugin (plugins_context.py:57-63)
-    ctx.register_middleware("llm_execution", injector.make_llm_execution(
-        state_dir, log, probe, _load_order_probe(ctx), ledger=ledger, watcher=watcher,
-        registry_probe=_registry_probe(ctx)))
+    ctx.register_middleware("llm_execution", injector.make_llm_execution(state_dir, log, probe, ledger=ledger))
     ctx.register_middleware("tool_execution", observer.make_tool_execution_tap(log))
     observer.install_socket_audit(log)
     log.write("activated", calls=len(plan["calls"]), dont_write_bytecode=sys.dont_write_bytecode)
-
-
-def _registry_probe(ctx: Any) -> Callable[[], Any]:
-    """Drill child only, read-only: the manager's LoadedPlugin records (hermes_cli/plugins.py:222-233), the same
-    private mapping _load_order_probe reads. Missing means the census reports each plugin's registrations unknown."""
-    def registry() -> Any:
-        found = getattr(getattr(ctx, "_manager", None), "_plugins", None)
-        if found is None:
-            raise LookupError("no plugin registry on this Hermes")
-        return found
-
-    return registry
-
-
-def _load_order_probe(ctx: Any) -> Callable[[], list[str]]:
-    """Drill child only, read-only: the manager's plugin registry is insertion-ordered by load, the order hooks fire
-    in (hermes_cli/plugins_loader.py:359, plugins_activation.py:84-90 iterate it the same way). There is no public
-    accessor, so this reads the private mapping behind PluginContext.has_plugin; any failure reports "unknown"."""
-    def order() -> list[str]:
-        return list(_registry_probe(ctx)())
-
-    return order
 
 
 def register(ctx: Any) -> None:

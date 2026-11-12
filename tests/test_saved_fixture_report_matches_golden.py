@@ -34,9 +34,8 @@ def test_saved_report_matrix_is_the_golden_matrix(report) -> None:
 
 def test_saved_report_liveness_and_census(report) -> None:
     cells = {(c["column"], c["call_id"]): c for c in report["cells"]}
-    assert {(cid, col): cells[(col, cid)].get("liveness", "") for col in COLUMNS for cid in CALLS} == \
-        {(cid, col): liveness_of(cells[(col, cid)]["primary"], col, cid) for col in COLUMNS for cid in CALLS}
-    assert {k: tuple(c["fired"]) for k, c in report["census"].items()} == FIRED
+    assert all(cells[(col, cid)].get("liveness", "") == "" for col in COLUMNS for cid in CALLS)
+    assert "census" not in report
 
 
 def test_saved_report_tally_and_findings(report) -> None:

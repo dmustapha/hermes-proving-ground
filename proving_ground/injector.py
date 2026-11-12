@@ -101,17 +101,13 @@ class StepContext:
     """What one llm_execution call carries besides the request, and the child-side helpers that observe it."""
     original: Any = None
     trace: Any = None
-    loaded_probe: Callable[[str], bool] | None = None
-    order_probe: Callable[[], Any] | None = None
+    loaded_probe: Callable[[str], bool] | None = None  # public PluginContext.has_plugin
     ledger: ReplyLedger | None = None
-    watcher: Any = None  # census.Watcher
-    registry_probe: Callable[[], Mapping[str, Any]] | None = None
 
 
 def scripted_reply(request: Any, state_dir: Path, log: EventLog,
-                   loaded_probe: Callable[[str], bool] | None = None,
-                   order_probe: Callable[[], Any] | None = None, step: StepContext | None = None) -> dict[str, Any]:
-    step = step or StepContext(loaded_probe=loaded_probe, order_probe=order_probe)
+                   loaded_probe: Callable[[str], bool] | None = None, step: StepContext | None = None) -> dict[str, Any]:
+    step = step or StepContext(loaded_probe=loaded_probe)
     abort_path = state_dir / safety.ABORT_FILENAME
     if abort_path.exists():
         reason = abort_path.read_text(encoding="utf-8").strip() or "ABORTED"
@@ -140,46 +136,15 @@ def scripted_reply(request: Any, state_dir: Path, log: EventLog,
 
 
 def _first_step(plan: Mapping[str, Any], log: EventLog, step: StepContext) -> None:
-    """Every plugin has loaded by the first model step: confirm the subjects, watch any that loaded after
-    PROVING GROUND, and record what each registered."""
+    """Every plugin has loaded by the first model step: confirm each subject through the public has_plugin. The load
+    order and which subjects load after PROVING GROUND come from the plan (the parent's manifest load order), never
+    from the plugin manager's private registry."""
     if step.loaded_probe is None:
         return
     expected = [str(k) for k in plan.get("subjects") or []]
     loaded = [k for k in expected if _safe_probe(step.loaded_probe, k)]
-    census = None
-    if step.watcher is not None and step.registry_probe is not None:
-        step.watcher.wrap_loaded(at_step=True)
-        census = _safe_census(step)
     log.write("plugins_loaded", expected=expected, loaded=loaded, missing=[k for k in expected if k not in loaded],
-              order=_child_order(step.order_probe, expected),
-              inner=_loaded_after(_child_order(step.order_probe, None), str(plan.get("pg_key") or ""), expected),
-              **({"census": census} if census is not None else {}))
-
-
-def _loaded_after(order: list[str] | None, pg_key: str, expected: list[str]) -> list[str]:
-    """Subjects the child loaded after PROVING GROUND (a requires_plugins layer): their llm_execution middleware
-    sits inside PROVING GROUND's frame, which never calls next_call."""
-    if not order or pg_key not in order:
-        return []
-    return [k for k in order[order.index(pg_key) + 1:] if k in expected]
-
-
-def _safe_census(step: StepContext) -> dict[str, Any] | None:
-    try:
-        return step.watcher.census(step.registry_probe())
-    except Exception:
-        return None  # no census: the report says the registrations are unknown
-
-
-def _child_order(probe: Callable[[], Any] | None, expected: list[str] | None) -> list[str] | None:
-    """The subject plugins (every plugin when *expected* is None) in the order the child actually loaded them;
-    None when the child cannot say."""
-    if probe is None:
-        return None
-    try:
-        return [str(k) for k in probe() if expected is None or str(k) in expected]
-    except Exception:
-        return None
+              inner=[str(k) for k in plan.get("inner") or () if str(k) in expected])
 
 
 def _safe_probe(probe: Callable[[str], bool], key: str) -> bool:
@@ -197,10 +162,8 @@ def _fresh(reply: Any) -> Any:
         return reply
 
 
-def make_llm_execution(state_dir: Path, log: EventLog, loaded_probe: Callable[[str], bool] | None = None,
-                       order_probe: Callable[[], Any] | None = None, *, ledger: ReplyLedger | None = None,
-                       watcher: Any = None, registry_probe: Callable[[], Mapping[str, Any]] | None = None
-                       ) -> Callable[..., Any]:
+def make_llm_execution(state_dir: Path, log: EventLog, loaded_probe: Callable[[str], bool] | None = None, *,
+                       ledger: ReplyLedger | None = None) -> Callable[..., Any]:
     """The last-resort reply is built here, at register time. Hermes takes only a ChatCompletion back from
     llm_execution (agent/turn_api_call.py:139 hands it to the same intake as a provider response), and a callback that
     raises is skipped to the next frame and finally to the provider (hermes_cli/middleware.py:206-214). Built up front,
@@ -211,8 +174,7 @@ def make_llm_execution(state_dir: Path, log: EventLog, loaded_probe: Callable[[s
 
     def llm_execution(request: Any = None, next_call: Any = None, original_request: Any = None,
                       middleware_trace: Any = None, **_kwargs: Any) -> Any:
-        step = StepContext(original_request, middleware_trace, loaded_probe, order_probe, ledger, watcher,
-                           registry_probe)
+        step = StepContext(original_request, middleware_trace, loaded_probe, ledger)
         try:
             return _completion(scripted_reply(request, state_dir, log, step=step))
         except Exception as exc:  # middleware fails open; an exception here would reach the provider

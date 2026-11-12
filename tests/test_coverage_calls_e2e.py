@@ -74,7 +74,7 @@ def test_a_guard_keyed_after_proving_ground_still_blocks_a_probe(drill) -> None:
     run, m, _t = drill
     assert GUARD > "proving-ground" > "fx_nudger"
     stack = next(c for c in run.columns if c.name == "stack")
-    assert stack.child_order == ("fx_nudger", GUARD)
+    assert stack.child_order is None  # the child reads no private registry; order comes from the manifests
     assert m.cell(f"solo:{GUARD}", "TC21").primary is Outcome.BLOCKED
     solo = next(c for c in run.columns if c.name == f"solo:{GUARD}").observations["TC21"]
     assert "fx_probe_guard: code execution is not allowed here" in f"{solo.delivered} {solo.error_message}"

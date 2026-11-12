@@ -9,7 +9,7 @@ maintainer: dmustapha
 tier: community
 category: tools
 requires_hermes: ">=0.23.1"
-version: "0.1.0"
+version: "0.1.1"
 title: "Proving Ground"
 image: "https://raw.githubusercontent.com/dmustapha/hermes-proving-ground/{{PINNED_SHA}}/docs/banner.png"
 screenshots:

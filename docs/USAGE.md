@@ -22,7 +22,7 @@ The README has the quickstart. This page has the rest: actions and options, what
 | REQUEST REWRITTEN | An `llm_request` or `llm_execution` middleware changed the step request that produced this call. |
 | MODEL REPLY CHANGED | An `llm_execution` middleware changed the scripted reply for this call before the agent took it in. |
 | EXECUTION REPLACED | A `tool_execution` middleware answered the call itself; PROVING GROUND's `pre_tool_call` and the tool never ran. |
-| PASSED THROUGH | Nothing in the stack changed this call or its result. `(ran, no change)` when a hook or middleware of the column's plugins fired on this call, `(not invoked)` when none did. |
+| PASSED THROUGH | Nothing in the stack changed this call or its result. Whether a plugin ran on the call and changed nothing, or was not invoked, is unknown: Hermes has no public dispatch trace, and PROVING GROUND does not read its private hook tables. |
 
 More (statuses, never results): ESCAPED (a rewritten call ran outside the temporary directory; detected after it ran, not prevented, and the column is stopped), ERRORED (a plugin hook raised, or the harness stopped the column), LOAD FAILED (the plugin was not confirmed loaded in its child, so its cells are never shown as PASSED THROUGH), NOT RUN (the call never reached execution in this column) and N/A (the plugin declares `requires_env`; the child has no credentials, so it is not run).
 
@@ -104,14 +104,14 @@ The Hermes v0.23.1 composition rules this depends on:
 These rules are version-scoped. A Hermes upgrade that changes one of them changes the matrix, which is what contracts are for.
 
 ## The committed fixture drill
-[fixture-report.md](fixture-report.md) (JSON: [fixture-report.json](fixture-report.json), HTML: [fixture-report.html](fixture-report.html)) is one run of `hermes provingground --fixtures` at commit 3fb1469 on Hermes v0.23.1, run 2026-11-11: `24 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding`, `model: NOT CALLED (scripted turn: 131 llm_execution steps answered by PROVING GROUND, 0 provider calls)`, 23.2 s on a warm cache, 0 drill processes and 0 drill roots left after it. Its Markdown and HTML views are rendered from that JSON by the current report layout.
+[fixture-report.md](fixture-report.md) (JSON: [fixture-report.json](fixture-report.json), HTML: [fixture-report.html](fixture-report.html)) is one run of `hermes provingground --fixtures` with PROVING GROUND 0.1.1 on Hermes v0.23.1, run 2026-11-12: `24 test calls · 3 plugins · 3 distinct effects recorded · 1 cross-plugin finding`, `model: NOT CALLED (scripted turn: 131 llm_execution steps answered by PROVING GROUND, 0 provider calls)`, 33.7 s on a warm cache, 0 drill processes and 0 drill roots left after it. Its Markdown and HTML views are rendered from that JSON by the current report layout.
 
 TC04 in the full stack: the tool printed a three-line test log with one FAILED line, and the model would have received it without that line. One solo run names `fx_trimmer`.
 
 ![TC03 x FULL STACK cell detail in the HTML report](cell-detail.png)
 
 ## A real catalog stack
-Five catalog plugins at their pinned catalog SHAs, installed into a separate Hermes home: canary-trap, hermes-detox, progress-squash, readonly-guard, safe-swap. One run on Hermes v0.23.1 (2026-11-11) recorded `24 test calls · 5 plugins · 22 distinct effects recorded · 2 cross-plugin findings` ([real-stack-report.md](real-stack-report.md)).
+Five catalog plugins at their pinned catalog SHAs, installed into a separate Hermes home: canary-trap, hermes-detox, progress-squash, readonly-guard, safe-swap. One run of PROVING GROUND 0.1.1 on Hermes v0.23.1 (2026-11-12) recorded `24 test calls · 5 plugins · 22 distinct effects recorded · 2 cross-plugin findings` ([real-stack-report.md](real-stack-report.md)).
 
 Both findings are `MASKED_IN_STACK`: alone, hermes-detox changes TC05's long-output result and progress-squash changes TC12's progress-bar output; in the full stack, readonly-guard in its default read-only mode stops both calls before they run, so neither change reaches the model. Each plugin did what its catalog entry describes. Only the combination is new information.
 

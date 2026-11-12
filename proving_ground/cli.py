@@ -59,16 +59,14 @@ def hermes_scratch_dirs() -> list[Path]:
 
 def drill_temp_base() -> Path:
     """The temp dir drills use. On Linux with TMPDIR unset, Hermes's boot moves the temp dir into its own scratch
-    dir, which is not a system temp base; drills then use the first existing system temp base instead, and
-    tempfile follows it so the warm cache, the roots and the sweeps all look at the same place."""
+    dir, which is not a system temp base; drills then use the first existing system temp base instead. The choice is
+    passed explicitly (RunnerSettings.temp_base) to everything a drill creates or sweeps; the live Hermes process's
+    tempfile.tempdir is never changed."""
     temp = Path(tempfile.gettempdir()).resolve()
     if not any(temp.is_relative_to(d.resolve()) for d in hermes_scratch_dirs()):
         return temp
     system = next((Path(b) for b in safety.TEMP_BASES if Path(b).is_dir()), None)
-    if system is None:
-        return temp
-    tempfile.tempdir = str(system)
-    return system.resolve()
+    return temp if system is None else system.resolve()
 
 
 def build_settings(args: argparse.Namespace) -> runner.RunnerSettings:
@@ -142,7 +140,7 @@ def select_subjects(args: argparse.Namespace, settings: runner.RunnerSettings) -
 def calls_probe() -> testcalls.SandboxContext:
     """A render-only context shaped like a column's (nothing is created there): user calls are checked against
     the same containment rules and grammar a column applies."""
-    sandbox = Path(tempfile.gettempdir()).resolve() / "pg-calls-probe" / "sandbox"
+    sandbox = drill_temp_base() / "pg-calls-probe" / "sandbox"
     return testcalls.SandboxContext(sandbox, "http://127.0.0.1:9/probe", testcalls.make_canary())
 
 
@@ -367,8 +365,8 @@ def shareable(m: matrix.Matrix) -> matrix.Matrix:
     traceback, an error message) become ~ and {TMP}, and TC16's documented fake AWS key id is written as its
     {FAKE_AWS_KEY_ID} placeholder, so a committed or shared report never trips a secret scanner (Hermes's install
     scan blocks a plugin carrying it). The terminal view, which stays local, is not changed."""
-    temp = tempfile.gettempdir()
-    rules = report.path_rules({str(Path.home()): "~", temp: "{TMP}", os.path.realpath(temp): "{TMP}"})
+    temp, drill = tempfile.gettempdir(), str(drill_temp_base())
+    rules = report.path_rules({str(Path.home()): "~", temp: "{TMP}", os.path.realpath(temp): "{TMP}", drill: "{TMP}"})
     rules.append((re.compile(re.escape(testcalls.FAKE_AWS_KEY_ID)), "{FAKE_AWS_KEY_ID}"))
     return report.matrix_from_dict(report.scrub_paths(report.matrix_to_dict(m), rules))
 

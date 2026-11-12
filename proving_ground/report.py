@@ -14,7 +14,7 @@ from typing import Any, Mapping, Sequence
 from . import matrix as mx
 
 REPORT_SCHEMA = "provingground.report.v1"
-GENERATOR = "proving-ground 0.1.0"  # plugin.yaml version; tests/test_report_loading.py keeps them equal
+GENERATOR = "proving-ground 0.1.1"  # plugin.yaml version; tests/test_report_loading.py keeps them equal
 HEADLINE = "PROVING GROUND · a wiring test for your plugin stack"
 OBSERVED = "Observed on {n} synthetic inputs in a sandbox."
 SCOPE_NOTE = ("This report describes what your plugins did to these specific test calls. "
@@ -454,6 +454,11 @@ def finding_lines(m: mx.Matrix) -> list[str]:
     return lines or [NO_FINDING]
 
 
+LIVENESS_UNKNOWN = ("per-plugin liveness: unknown. A PASSED THROUGH cell does not say whether a plugin ran on the call "
+                    "and changed nothing, or was never invoked: Hermes has no public dispatch trace, and PROVING GROUND "
+                    "does not read or wrap the plugin manager's private hook tables")
+
+
 def _note_lines(m: mx.Matrix) -> list[str]:
     """Under the matrix: who each stack effect is attributed to, and everything that qualifies a cell."""
     lines = [f"• attribution {a.call_id} {mx.LABELS[a.outcome]}: {a.kind} — {a.note}" for a in m.attributions]
@@ -466,6 +471,8 @@ def _note_lines(m: mx.Matrix) -> list[str]:
     lines += [f"• UNSTABLE {c.call_id} in {c.column}: its {len(c.varied)} solo runs showed {' / '.join(c.varied)}"
               for c in m.cells.values() if c.varied]
     lines += [f"• coverage of {line}" for line in census_lines(m)]
+    if not m.census and any(name != "baseline" for name in m.columns):
+        lines.append(f"• {LIVENESS_UNKNOWN}")
     if m.unstable:
         lines.append(f"• unstable between two baseline runs (never reported as RESULT CHANGED): {', '.join(sorted(m.unstable))}")
     return lines

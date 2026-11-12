@@ -3,7 +3,7 @@
 # hermes_cli/plugin_validate.py:438 and accepted by `hermes plugins validate`
 # ("declared middleware — matches registrations"); requires_hermes gate plugins_manifest.py:457-510.
 name: proving-ground
-version: "0.1.0"
+version: "0.1.1"
 description: "A wiring test for your plugin stack: sends known, harmless test calls through every installed plugin in a throwaway child Hermes home (model never called) and shows what each plugin blocked, rewrote, changed or let through."
 author: dmustapha
 license: MIT

@@ -69,7 +69,7 @@ def test_problems_catch_an_unpinned_url_and_a_manifest_mismatch() -> None:
     rendered = module.render(TEMPLATE.read_text(encoding="utf-8"), sha)
     manifest = module.load_yaml((ROOT / "plugin.yaml").read_text(encoding="utf-8"))
     assert module.problems(rendered, sha, manifest) == []
-    broken = rendered.replace(f"{sha}/docs/matrix.png", "main/docs/matrix.png").replace('version: "0.1.0"',
+    broken = rendered.replace(f"{sha}/docs/matrix.png", "main/docs/matrix.png").replace(f'version: "{manifest["version"]}"',
                                                                                      'version: "9.9.9"')
     found = module.problems(broken, sha, manifest)
     assert any("matrix.png is not pinned" in p for p in found) and "version differs from plugin.yaml" in found

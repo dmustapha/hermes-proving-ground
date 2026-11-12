@@ -39,27 +39,19 @@ def test_requires_accepts_ids_and_mappings(tmp_path: Path) -> None:
     assert _keys(subjects) == ["base", "zbase", "addon"]
 
 
-def test_child_reports_its_real_load_order(tmp_path: Path, monkeypatch) -> None:
+def test_plan_names_subjects_loaded_after_proving_ground_from_manifests() -> None:
+    assert runner.loaded_after_pg([_src("base"), _src("addon", "base"), _src("solo")]) == ["addon"]
+    assert runner.loaded_after_pg([_src("a", "b"), _src("b", "a")]) == []  # a cycle: one alphabetical layer
+
+
+def test_child_echoes_the_planned_inner_subjects_and_reads_no_registry(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(injector, "_completion", lambda body: body)
     (tmp_path / "plan.json").write_text(json.dumps({"sandbox": str(tmp_path), "subjects": ["fx_b", "fx_a"],
-                                                    "calls": []}), encoding="utf-8")
+                                                    "inner": ["fx_a"], "calls": []}), encoding="utf-8")
     log = EventLog(tmp_path / "events.jsonl")
-    order = lambda: ["fx_b", "proving-ground", "fx_a"]  # noqa: E731
-    injector.make_llm_execution(tmp_path, log, lambda _k: True, order)(request={"messages": []}, next_call=None)
+    injector.make_llm_execution(tmp_path, log, lambda _k: True)(request={"messages": []}, next_call=None)
     loaded = next(json.loads(x) for x in (tmp_path / "events.jsonl").read_text().splitlines() if '"plugins_loaded"' in x)
-    assert loaded["order"] == ["fx_b", "fx_a"]
-
-
-def test_unknown_child_order_is_none_not_a_mismatch(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(injector, "_completion", lambda body: body)
-    (tmp_path / "plan.json").write_text(json.dumps({"sandbox": str(tmp_path), "subjects": ["fx_a"], "calls": []}))
-
-    def broken() -> list[str]:
-        raise LookupError("no registry")
-
-    log = EventLog(tmp_path / "events.jsonl")
-    injector.make_llm_execution(tmp_path, log, lambda _k: True, broken)(request={"messages": []}, next_call=None)
-    assert '"order": null' in (tmp_path / "events.jsonl").read_text()
+    assert loaded["inner"] == ["fx_a"] and "order" not in loaded and "census" not in loaded
 
 
 def _with_child_order(col: matrix.ColumnRun, order: tuple[str, ...] | None) -> matrix.ColumnRun:

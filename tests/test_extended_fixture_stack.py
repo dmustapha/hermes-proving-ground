@@ -96,9 +96,9 @@ def test_redactor_masks_the_trimmer_in_the_stack(drill) -> None:
 
 @pytest.mark.hermes
 def test_child_load_order_puts_the_redactor_before_the_trimmer(drill) -> None:
-    run, _m = drill
+    run, m = drill
     stack = next(c for c in run.columns if c.name == "stack")
-    assert stack.child_order == LOAD_ORDER
+    assert stack.child_order is None and m.conditions.load_order == LOAD_ORDER
 
 
 @pytest.mark.hermes

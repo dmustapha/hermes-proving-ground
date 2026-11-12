@@ -386,6 +386,7 @@ def build_child_home(root: Path, spec: ColumnSpec, settings: RunnerSettings,
     state.mkdir(parents=True, exist_ok=True)
     (state / safety.TOKEN_FILENAME).write_text(token, encoding="utf-8")
     plan: dict[str, Any] = {"sandbox": str(root / "sandbox"), "subjects": [s.key for s in spec.plugins], "pg_key": pg_key,
+                            "inner": loaded_after_pg(spec.plugins),
                             "calls": [c.as_plan() for c in calls], "final_reply": final_reply(wire_probe_text())}
     if settings.wires:
         plan["wires"] = wire_spec(settings)
@@ -890,6 +891,21 @@ def load_order(subjects: Sequence[PluginSource]) -> list[PluginSource]:
         ordered.extend(ready)
         sorter.done(*ready)
     return [by_key[k] for k in ordered]
+
+
+def loaded_after_pg(subjects: Sequence[PluginSource]) -> list[str]:
+    """Subjects Hermes loads in a later dependency layer than PROVING GROUND's copy (which has no requires_plugins and
+    sorts last in the first layer): every subject with an in-column requires_plugins, unless the graph has a cycle
+    (then Hermes falls back to one alphabetical layer). Computed from manifests, like load_order."""
+    import graphlib
+
+    keys = {s.key for s in subjects}
+    graph = {s.key: {d for d in s.requires if d in keys and d != s.key} for s in subjects}
+    try:
+        graphlib.TopologicalSorter(graph).prepare()
+    except graphlib.CycleError:
+        return []
+    return [k for k in (s.key for s in load_order(subjects)) if graph[k]]
 
 
 def _requires(manifest: Mapping[str, Any]) -> tuple[str, ...]:

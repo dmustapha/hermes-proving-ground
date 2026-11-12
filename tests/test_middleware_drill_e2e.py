@@ -34,7 +34,6 @@ def drill():
 def test_an_llm_execution_middleware_keyed_after_proving_ground_runs_and_is_attributed(drill) -> None:
     assert all(Outcome.MODEL_REPLY_CHANGED in drill.cell("solo:tx_reply_stamper", cid).outcomes for cid in CALLS)
     assert {a.plugins for a in drill.attributions if a.outcome is Outcome.MODEL_REPLY_CHANGED} == {("tx_reply_stamper",)}
-    assert drill.census["tx_reply_stamper"].fired == ("middleware llm_execution",)
 
 
 @pytest.mark.hermes
@@ -47,7 +46,7 @@ def test_an_llm_request_rewrite_is_request_rewritten_with_its_trace_label(drill)
 @pytest.mark.hermes
 def test_a_tool_execution_short_circuit_is_execution_replaced_and_the_rest_ran(drill) -> None:
     assert drill.cell("solo:tx_exec_replacer", "TC01").outcomes == (Outcome.EXECUTION_REPLACED,)
-    assert report.cell_label(drill.cell("solo:tx_exec_replacer", "TC02")) == "PASSED THROUGH (ran, no change)"
+    assert report.cell_label(drill.cell("solo:tx_exec_replacer", "TC02")) == "PASSED THROUGH"
     attributed = [a for a in drill.attributions if a.outcome is Outcome.EXECUTION_REPLACED]
     assert [(a.call_id, a.kind, a.plugins) for a in attributed] == [("TC01", "solo-match", ("tx_exec_replacer",))]
 

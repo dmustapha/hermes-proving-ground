@@ -1,7 +1,7 @@
 # File: tests/test_linux_scratch_temp.py
 # On Linux with TMPDIR unset, Hermes's boot points the temp dir at <HERMES_HOME>/cache/scratch
 # (hermes_bootstrap.py:455-462). That is not a system temp base, so the drill uses the first existing system temp
-# base instead, and tempfile follows it: the warm cache, the roots and the sweeps agree on one directory.
+# base instead, passed explicitly to the warm cache, the roots and the sweeps; tempfile.tempdir is never changed.
 from __future__ import annotations
 
 import argparse
@@ -29,7 +29,7 @@ def test_hermes_scratch_temp_dir_falls_back_to_the_first_system_temp_base(hermes
     first = next(Path(b) for b in safety.TEMP_BASES if Path(b).is_dir())
     assert settings.temp_base == first.resolve()
     assert settings.warm_cache == first.resolve() / "provingground-cache" / "installs"
-    assert Path(tempfile.gettempdir()).resolve() == settings.temp_base  # roots and sweeps look at the same place
+    assert Path(tempfile.gettempdir()).resolve() == hermes_scratch_tmp.resolve()  # the live process is untouched
 
 
 def test_scratch_named_by_hermes_marker_env_also_falls_back(monkeypatch, tmp_path) -> None:

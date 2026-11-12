@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from helpers import IDS, SANDBOX, URL, call_events, plan
 
-from proving_ground import census, injector, matrix, observer, report, runner
+from proving_ground import injector, matrix, observer, report, runner
 from proving_ground.matrix import Outcome
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -168,63 +168,6 @@ def test_post_tool_call_keeps_the_middleware_trace_labels(tmp_path: Path) -> Non
     assert _events(tmp_path)[-1]["middleware_trace"] == ["relabel / plugin"]
 
 
-# --- the census watcher --------------------------------------------------------------------------------------------
-
-
-def _manager(tmp_path: Path) -> tuple[Any, dict[str, list[Any]]]:
-    def narrow(tool_call_id: str = "") -> str:  # declares only tool_call_id: Hermes passes it nothing else
-        return f"narrow saw {tool_call_id}"
-
-    def wide(**kwargs: Any) -> Any:
-        return sorted(kwargs)
-
-    def theirs(**_: Any) -> None:
-        return None
-
-    narrow.__module__ = wide.__module__ = "hermes_plugins.fx_one"
-    theirs.__module__ = "hermes_plugins.other"
-    hooks = {"pre_tool_call": [narrow, theirs], "post_tool_call": [wide]}
-    loaded = types.SimpleNamespace(module=types.SimpleNamespace(__name__="hermes_plugins.fx_one"),
-                                   hooks_registered=["pre_tool_call", "post_tool_call"], middleware_registered=[],
-                                   tools_registered=["fx_tool"], commands_registered=[])
-    manager = types.SimpleNamespace(_hooks=hooks, _middleware={}, _plugins={"fx_one": loaded})
-    return manager, hooks
-
-
-def test_watcher_wraps_only_subject_callbacks_and_keeps_their_arguments(tmp_path: Path) -> None:
-    manager, hooks = _manager(tmp_path)
-    other = hooks["pre_tool_call"][1]
-    watcher = census.Watcher(observer.EventLog(tmp_path / "events.jsonl"), lambda: manager, ["fx_one"])
-    watcher.wrap_loaded()
-    watcher.wrap_loaded(at_step=True)  # idempotent: nothing is wrapped twice
-    assert hooks["pre_tool_call"][1] is other
-    assert hooks["pre_tool_call"][0](tool_call_id="pgcall_TC01", args={"x": 1}) == "narrow saw pgcall_TC01"
-    assert hooks["post_tool_call"][0](tool_call_id="pgcall_TC01", status="ok") == ["status", "tool_call_id"]
-    hooks["pre_tool_call"][0](tool_call_id="pgcall_TC01")
-    fired = [e for e in _events(tmp_path) if e["ev"] == "fired"]
-    assert [(e["name"], e["tool_call_id"]) for e in fired] == [("pre_tool_call", "pgcall_TC01"),
-                                                                ("post_tool_call", "pgcall_TC01")]
-    entry = watcher.census(manager._plugins)["fx_one"]
-    assert entry["watched"] is True and entry["late"] is False
-    assert entry["registered"]["tools"] == ["fx_tool"]
-
-
-def test_watcher_reports_unwatched_when_a_registration_has_no_matching_callback(tmp_path: Path) -> None:
-    manager, hooks = _manager(tmp_path)
-    hooks["post_tool_call"][0].__module__ = "elsewhere"  # registered by fx_one, but defined in another module
-    watcher = census.Watcher(observer.EventLog(tmp_path / "events.jsonl"), lambda: manager, ["fx_one", "fx_gone"])
-    watcher.wrap_loaded()
-    found = watcher.census(manager._plugins)
-    assert found["fx_one"]["watched"] is False
-    assert found["fx_gone"] == {"registered": None, "watched": False, "late": False}
-
-
-def test_watcher_never_raises_when_the_manager_is_missing(tmp_path: Path) -> None:
-    watcher = census.Watcher(observer.EventLog(tmp_path / "events.jsonl"), lambda: None, ["fx_one"])
-    watcher.wrap_loaded()
-    assert watcher.census({})["fx_one"]["registered"] is None
-
-
 # --- classification and liveness -----------------------------------------------------------------------------------
 
 
@@ -294,6 +237,13 @@ def test_liveness_is_not_claimed_when_the_census_is_unknown_or_unwatched() -> No
     m = _build(_column("solo:fx_one", ("fx_one",), []), _column("solo:fx_two", ("fx_two",), [], census_entry=unwatched))
     assert m.cell("solo:fx_one", "TC01").liveness == "" and m.cell("solo:fx_two", "TC01").liveness == ""
     assert report.cell_label(m.cell("solo:fx_one", "TC01")) == "PASSED THROUGH"
+
+
+def test_a_new_drill_reports_liveness_as_unknown_instead_of_guessing() -> None:
+    m = _build(_column("solo:fx_one", ("fx_one",), []))
+    assert m.census == {} and m.cell("solo:fx_one", "TC01").liveness == ""
+    for text in (report.render_terminal(m, color=False), report.render_markdown(m), report.render_html(m)):
+        assert "per-plugin liveness: unknown" in text and "private hook tables" in " ".join(text.split())
 
 
 # --- the report -----------------------------------------------------------------------------------------------------

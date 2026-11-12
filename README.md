@@ -42,7 +42,7 @@ The cells read BLOCKED, REWROTE, RESULT CHANGED, APPROVAL-GATED or PASSED THROUG
 > - **Approvals stay on and are always denied** in the child. PROVING GROUND never answers one, and refuses to run under YOLO, approvals off, cron or a messaging platform.
 > - **Nothing left behind:** your Hermes config, sessions, memories and installed plugins are unchanged by a drill, and every report counts the drill processes and roots left after it (0 and 0 in the committed drill).
 
-> - **Also on your machine:** it reads process command lines and environments (`ps axeww`) to find its own children, installs an audit hook (`sys.addaudithook`) in each drill child to count non-loopback connects, and inside that child only wraps your plugins' callbacks with pass-throughs to see which fired.
+> - **Also on your machine:** it reads process command lines and environments (`ps axeww`) to find its own children, installs an audit hook (`sys.addaudithook`) in each drill child to count non-loopback connects. It uses only public plugin APIs and never touches Hermes's private plugin-manager state, so per-plugin liveness is reported as unknown.
 
 The full disclosure of what it does on your machine is in [SECURITY.md](SECURITY.md#disclosure).
 

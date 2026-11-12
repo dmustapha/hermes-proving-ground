@@ -84,10 +84,8 @@ def test_full_matrix_snapshot(drill) -> None:
 @pytest.mark.hermes
 def test_liveness_labels_and_census_snapshot(drill) -> None:
     _run, m = drill
-    assert {(cid, col): m.cell(col, cid).liveness for col in COLUMNS for cid in CALLS} == \
-        {(cid, col): liveness_of(m.cell(col, cid).primary.value, col, cid) for col in COLUMNS for cid in CALLS}
-    assert {k: c.fired for k, c in m.census.items()} == FIRED
-    assert all(c.watched and not c.late and not c.inner for c in m.census.values())
+    assert all(m.cell(col, cid).liveness == "" for col in COLUMNS for cid in CALLS)  # unknown: no private reads
+    assert m.census == {}
 
 
 @pytest.mark.hermes
@@ -101,5 +99,5 @@ def test_every_child_ran_with_bytecode_off(drill) -> None:
 def test_child_load_order_matches_the_computed_order(drill) -> None:
     run, m = drill
     stack = next(c for c in run.columns if c.name == "stack")
-    assert stack.child_order == ("fx_guard", "fx_rewriter", "fx_trimmer") == m.conditions.load_order
+    assert stack.child_order is None and m.conditions.load_order == ("fx_guard", "fx_rewriter", "fx_trimmer")
     assert m.conditions.order_note == ""

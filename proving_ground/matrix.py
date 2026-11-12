@@ -110,7 +110,7 @@ class ColumnRun:
     stray_escapes: tuple[tuple[str, ...], ...] = ()  # escapes whose tool_call_id matched no drill call
     bytecode_off: bool | None = None  # the child's sys.dont_write_bytecode, from its activated event
     child_order: tuple[str, ...] | None = None  # subject plugins in the order the child loaded them
-    census: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)  # plugin -> plugins_loaded census entry
+    census: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)  # plugin -> census entry (reports saved before 0.1.1 only)
     fired: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # plugin -> "kind name" entries that fired
     fired_calls: Mapping[str, frozenset[str]] = field(default_factory=dict)  # plugin -> call ids it fired on
 
