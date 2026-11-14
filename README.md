@@ -1,17 +1,18 @@
 # PROVING GROUND
 **A wiring test for your Hermes plugin stack.**
 
+Listed in the official [Hermes plugin catalog](https://github.com/NousResearch/hermes-agent/tree/main/plugin-catalog) (community tier), merged in [NousResearch/hermes-agent#153961](https://github.com/NousResearch/hermes-agent/pull/153961).
+
 Your plugins don't run alone: every tool call passes through all of them, and Hermes merges `pre_tool_call` rewrites only after every check has already looked at the original arguments. So a guard and a rewriter that each behave correctly on their own can let through a call the guard would have stopped, and nothing inside either plugin can see it.
 
 PROVING GROUND sends 24 known, harmless test calls through the plugins you have installed, with the model never called, and shows in one matrix what each plugin, and the whole stack, did to each call.
 
 ## Quickstart
 ```bash
-hermes plugins install https://github.com/dmustapha/hermes-proving-ground
-hermes plugins enable proving-ground   # install leaves it disabled
-hermes provingground --fixtures        # one command: the bundled three-plugin demo stack
+hermes plugins install proving-ground --enable   # from the Hermes plugin catalog
+hermes provingground --fixtures                  # the bundled three-plugin demo stack
 ```
-Drop `--fixtures` to test the plugins enabled in your own Hermes home. The first run copies Hermes's runtime from your own Hermes installs (no network, the source is only read); only when there are none does Hermes's own installer download it, about 650 MB, once (allowed up to 15 minutes).
+Installing by name pins the catalog's reviewed commit; `hermes plugins install https://github.com/dmustapha/hermes-proving-ground` installs the latest. Drop `--fixtures` to test the plugins enabled in your own Hermes home. The first run copies Hermes's runtime from your own Hermes installs (no network, the source is only read); only when there are none does Hermes's own installer download it, about 650 MB, once (allowed up to 15 minutes).
 
 ![The fixture matrix in the terminal: findings first, the matrix, then the drill conditions](docs/matrix.png)
 
@@ -25,7 +26,7 @@ The three demo plugins are the author's own fixtures, each written to show one H
 On a real five-plugin catalog stack (canary-trap, hermes-detox, progress-squash, readonly-guard, safe-swap at their pinned catalog SHAs) one run found 2 cross-plugin findings: readonly-guard stops TC05 and TC12 before hermes-detox's and progress-squash's changes can reach the model ([docs/real-stack-report.md](docs/real-stack-report.md)).
 
 ## Explore a real report without installing
-https://dmustapha.github.io/hermes-proving-ground/fixture-report.html (the fixture drill at 3fb1469) opens in any browser. Every cell opens its own detail: the args PROVING GROUND sent, the args that actually ran, and what reached the model, diffed against the zero-plugin baseline.
+https://dmustapha.github.io/hermes-proving-ground/fixture-report.html (the fixture drill on v0.1.1) opens in any browser. Every cell opens its own detail: the args PROVING GROUND sent, the args that actually ran, and what reached the model, diffed against the zero-plugin baseline.
 
 ## What it tests, and what it doesn't
 | It tests | It does not |
